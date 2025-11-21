@@ -53,9 +53,49 @@ export class WalletController {
         scriptHex: result.scriptHex,
       });
     } catch (error) {
-      const appError: AppError = error instanceof Error 
-        ? error 
+      const appError: AppError = error instanceof Error
+        ? error
         : new Error('Failed to create taproot multisig');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+
+  /**
+   * Create and broadcast a transaction
+   * POST /api/v1/wallet/create-transaction
+   */
+  static async createTransaction(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, nonce } = req.body;
+
+      if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey) {
+        const appError: AppError = new Error('Missing required fields');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const txid = await WalletService.createAndBroadcastTransaction(
+        userAddress,
+        hubAddress,
+        userPrivateKey,
+        hubPrivateKey,
+        nonce
+      );
+
+      res.json({
+        success: true,
+        txid,
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to create transaction');
       appError.statusCode = 500;
       next(appError);
     }
