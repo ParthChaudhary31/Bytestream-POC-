@@ -1,18 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Shield, Key, Copy, CheckCircle2 } from 'lucide-react';
 import { apiService } from '../services/api';
 
 interface NodeInitializationProps {
   userLabel: string;
+  existingKeys?: { address: string; privateKey: string; publicKey: string } | null;
   onKeysGenerated?: (keys: { address: string; privateKey: string; publicKey: string }) => void;
 }
 
-export function NodeInitialization({ userLabel, onKeysGenerated }: NodeInitializationProps) {
+export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }: NodeInitializationProps) {
   const [step, setStep] = useState<'initial' | 'generated'>('initial');
   const [loading, setLoading] = useState(false);
   const [keys, setKeys] = useState<{ address: string; privateKey: string; publicKey: string } | null>(null);
   const [copied, setCopied] = useState<'address' | 'privateKey' | 'publicKey' | null>(null);
+
+  // Restore keys from Redux on mount or when existingKeys changes
+  useEffect(() => {
+    if (existingKeys) {
+      setKeys(existingKeys);
+      setStep('generated');
+    } else {
+      setKeys(null);
+      setStep('initial');
+    }
+  }, [existingKeys]);
 
   const handleGenerateKeys = async () => {
     setLoading(true);

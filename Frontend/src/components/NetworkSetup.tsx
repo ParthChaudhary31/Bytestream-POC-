@@ -3,45 +3,43 @@ import { NodeInitialization } from './NodeInitialization';
 import { Button } from './ui/button';
 import { Copy, CheckCircle2 } from 'lucide-react';
 import { apiService } from '../services/api';
-
-interface UserKeys {
-  address: string;
-  privateKey: string;
-  publicKey: string;
-}
-
-interface TaprootMultisig {
-  address: string;
-  scriptHex: string;
-}
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import {
+  setUser1Keys,
+  setHubKeys,
+  setUser2Keys,
+  setUser1HubTaproot,
+  setUser2HubTaproot,
+  setUser1TransactionTxid,
+  setUser2TransactionTxid,
+  type UserKeys,
+  type TaprootMultisig,
+} from '../store/slices/networkSlice';
 
 export function NetworkSetup() {
-  const [user1Keys, setUser1Keys] = useState<UserKeys | null>(null);
-  const [hubKeys, setHubKeys] = useState<UserKeys | null>(null);
-  const [user2Keys, setUser2Keys] = useState<UserKeys | null>(null);
-  const [user1HubTaproot, setUser1HubTaproot] = useState<TaprootMultisig | null>(null);
-  const [user2HubTaproot, setUser2HubTaproot] = useState<TaprootMultisig | null>(null);
+  const dispatch = useAppDispatch();
+  const networkState = useAppSelector((state) => state.network);
+  const { user1Keys, hubKeys, user2Keys, user1HubTaproot, user2HubTaproot, user1TransactionTxid, user2TransactionTxid } = networkState;
+  
   const [loadingUser1Hub, setLoadingUser1Hub] = useState(false);
   const [loadingUser2Hub, setLoadingUser2Hub] = useState(false);
   const [loadingUser1Transaction, setLoadingUser1Transaction] = useState(false);
   const [loadingUser2Transaction, setLoadingUser2Transaction] = useState(false);
-  const [user1TransactionTxid, setUser1TransactionTxid] = useState<string | null>(null);
-  const [user2TransactionTxid, setUser2TransactionTxid] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   const allKeysGenerated = user1Keys && hubKeys && user2Keys;
   console.log('allKeysGenerated', allKeysGenerated)
 
   const handleUser1KeysGenerated = (keys: UserKeys) => {
-    setUser1Keys(keys);
+    dispatch(setUser1Keys(keys));
   };
 
   const handleHubKeysGenerated = (keys: UserKeys) => {
-    setHubKeys(keys);
+    dispatch(setHubKeys(keys));
   };
 
   const handleUser2KeysGenerated = (keys: UserKeys) => {
-    setUser2Keys(keys);
+    dispatch(setUser2Keys(keys));
   };
 
   const handleCreateUser1HubTaproot = async () => {
@@ -49,7 +47,7 @@ export function NetworkSetup() {
     setLoadingUser1Hub(true);
     try {
       const result = await apiService.createTaprootMultisig(user1Keys.address, hubKeys.address);
-      setUser1HubTaproot(result);
+      dispatch(setUser1HubTaproot(result));
     } catch (error) {
       console.error('Failed to create taproot multisig:', error);
       alert('Failed to create taproot multisig. Please try again.');
@@ -63,7 +61,7 @@ export function NetworkSetup() {
     setLoadingUser2Hub(true);
     try {
       const result = await apiService.createTaprootMultisig(user2Keys.address, hubKeys.address);
-      setUser2HubTaproot(result);
+      dispatch(setUser2HubTaproot(result));
     } catch (error) {
       console.error('Failed to create taproot multisig:', error);
       alert('Failed to create taproot multisig. Please try again.');
@@ -88,7 +86,7 @@ export function NetworkSetup() {
         user1Keys.privateKey,
         hubKeys.privateKey
       );
-      setUser1TransactionTxid(result.txid);
+      dispatch(setUser1TransactionTxid(result.txid));
       alert(`Transaction created and broadcasted successfully! TXID: ${result.txid}`);
     } catch (error) {
       console.error('Failed to create transaction:', error);
@@ -108,7 +106,7 @@ export function NetworkSetup() {
         user2Keys.privateKey,
         hubKeys.privateKey
       );
-      setUser2TransactionTxid(result.txid);
+      dispatch(setUser2TransactionTxid(result.txid));
       alert(`Transaction created and broadcasted successfully! TXID: ${result.txid}`);
     } catch (error) {
       console.error('Failed to create transaction:', error);
@@ -130,6 +128,7 @@ export function NetworkSetup() {
           <div className="flex flex-col justify-center">
             <NodeInitialization
               userLabel="User 1"
+              existingKeys={user1Keys}
               onKeysGenerated={handleUser1KeysGenerated}
             />
             
@@ -209,6 +208,7 @@ export function NetworkSetup() {
           <div>
             <NodeInitialization
               userLabel="Hub"
+              existingKeys={hubKeys}
               onKeysGenerated={handleHubKeysGenerated}
             />
           </div>
@@ -217,6 +217,7 @@ export function NetworkSetup() {
           <div className="flex flex-col justify-center">
             <NodeInitialization
               userLabel="User 2"
+              existingKeys={user2Keys}
               onKeysGenerated={handleUser2KeysGenerated}
             />
             
