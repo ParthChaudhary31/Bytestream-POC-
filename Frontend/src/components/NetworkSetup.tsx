@@ -23,6 +23,10 @@ export function NetworkSetup() {
   const [user2HubTaproot, setUser2HubTaproot] = useState<TaprootMultisig | null>(null);
   const [loadingUser1Hub, setLoadingUser1Hub] = useState(false);
   const [loadingUser2Hub, setLoadingUser2Hub] = useState(false);
+  const [loadingUser1Transaction, setLoadingUser1Transaction] = useState(false);
+  const [loadingUser2Transaction, setLoadingUser2Transaction] = useState(false);
+  const [user1TransactionTxid, setUser1TransactionTxid] = useState<string | null>(null);
+  const [user2TransactionTxid, setUser2TransactionTxid] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   const allKeysGenerated = user1Keys && hubKeys && user2Keys;
@@ -72,6 +76,46 @@ export function NetworkSetup() {
     navigator.clipboard.writeText(value);
     setCopied(type);
     setTimeout(() => setCopied(null), 2000);
+  };
+
+  const handleCreateUser1Transaction = async () => {
+    if (!user1Keys || !hubKeys) return;
+    setLoadingUser1Transaction(true);
+    try {
+      const result = await apiService.createTransaction(
+        user1Keys.address,
+        hubKeys.address,
+        user1Keys.privateKey,
+        hubKeys.privateKey
+      );
+      setUser1TransactionTxid(result.txid);
+      alert(`Transaction created and broadcasted successfully! TXID: ${result.txid}`);
+    } catch (error) {
+      console.error('Failed to create transaction:', error);
+      alert(`Failed to create transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setLoadingUser1Transaction(false);
+    }
+  };
+
+  const handleCreateUser2Transaction = async () => {
+    if (!user2Keys || !hubKeys) return;
+    setLoadingUser2Transaction(true);
+    try {
+      const result = await apiService.createTransaction(
+        user2Keys.address,
+        hubKeys.address,
+        user2Keys.privateKey,
+        hubKeys.privateKey
+      );
+      setUser2TransactionTxid(result.txid);
+      alert(`Transaction created and broadcasted successfully! TXID: ${result.txid}`);
+    } catch (error) {
+      console.error('Failed to create transaction:', error);
+      alert(`Failed to create transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setLoadingUser2Transaction(false);
+    }
   };
 
   return (
@@ -126,6 +170,35 @@ export function NetworkSetup() {
                         {copied === 'user1hub-address' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                       </Button>
                     </div>
+                  </div>
+                )}
+                {/* Create Transaction Button for User 1 + Hub */}
+                {user1Keys && hubKeys && (
+                  <div className="mt-4">
+                    <Button
+                      onClick={handleCreateUser1Transaction}
+                      disabled={loadingUser1Transaction}
+                      className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white h-10 disabled:opacity-50"
+                    >
+                      {loadingUser1Transaction ? 'Creating Transaction...' : 'Create & Broadcast Transaction'}
+                    </Button>
+                    {user1TransactionTxid && (
+                      <div className="mt-2">
+                        <p className="text-[#888] text-xs mb-1">Transaction ID</p>
+                        <div className="flex gap-2">
+                          <div className="flex-1 bg-[#0A0A0A] border border-[#2C2C2C] p-2 font-mono text-xs break-all text-white">
+                            {user1TransactionTxid}
+                          </div>
+                          <Button
+                            onClick={() => handleCopy(user1TransactionTxid, 'user1-txid')}
+                            size="sm"
+                            className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
+                          >
+                            {copied === 'user1-txid' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -184,6 +257,35 @@ export function NetworkSetup() {
                         {copied === 'user2hub-address' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                       </Button>
                     </div>
+                  </div>
+                )}
+                {/* Create Transaction Button for User 2 + Hub */}
+                {user2Keys && hubKeys && (
+                  <div className="mt-4">
+                    <Button
+                      onClick={handleCreateUser2Transaction}
+                      disabled={loadingUser2Transaction}
+                      className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white h-10 disabled:opacity-50"
+                    >
+                      {loadingUser2Transaction ? 'Creating Transaction...' : 'Create & Broadcast Transaction'}
+                    </Button>
+                    {user2TransactionTxid && (
+                      <div className="mt-2">
+                        <p className="text-[#888] text-xs mb-1">Transaction ID</p>
+                        <div className="flex gap-2">
+                          <div className="flex-1 bg-[#0A0A0A] border border-[#2C2C2C] p-2 font-mono text-xs break-all text-white">
+                            {user2TransactionTxid}
+                          </div>
+                          <Button
+                            onClick={() => handleCopy(user2TransactionTxid, 'user2-txid')}
+                            size="sm"
+                            className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
+                          >
+                            {copied === 'user2-txid' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
