@@ -1,3 +1,5 @@
+/// <reference types="../vite-env" />
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
 
@@ -46,6 +48,17 @@ class ApiService {
   async generateWallet() {
     return this.request<{ address: string; privateKey: string; publicKey: string }>(
       '/wallet/generate-wallet'
+    );
+  }
+
+  // Create Taproot multisig
+  async createTaprootMultisig(pubkey1: string, pubkey2: string) {
+    return this.request<{ address: string; scriptHex: string }>(
+      '/wallet/create-taproot-multisig',
+      {
+        method: 'POST',
+        body: JSON.stringify({ pubkey1, pubkey2 }),
+      }
     );
   }
 

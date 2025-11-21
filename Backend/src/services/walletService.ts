@@ -1,6 +1,10 @@
 import * as bitcoin from 'bitcoinjs-lib';
+import { initEccLib } from 'bitcoinjs-lib';
 import { ECPairFactory } from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
+
+// Initialize ECC library for bitcoinjs-lib
+initEccLib(ecc);
 
 const ECPair = ECPairFactory(ecc);
 
@@ -49,14 +53,18 @@ export class WalletService {
 
       const network = bitcoin.networks.bitcoin;
 
+      // Remove "0x" prefix if present
+      const cleanPubkey1 = pubkey1.startsWith('0x') ? pubkey1.slice(2) : pubkey1;
+      const cleanPubkey2 = pubkey2.startsWith('0x') ? pubkey2.slice(2) : pubkey2;
+
       // Helper to convert hex to x-only pubkey (32 bytes)
       const toXOnly = (hex: string) => {
         const buf = Buffer.from(hex, 'hex');
         return buf.length === 32 ? buf : buf.subarray(1, 33);
       };
 
-      const pk1 = toXOnly(pubkey1);
-      const pk2 = toXOnly(pubkey2);
+      const pk1 = toXOnly(cleanPubkey1);
+      const pk2 = toXOnly(cleanPubkey2);
 
       // Construct script: <144> OP_CHECKSEQUENCEVERIFY OP_DROP <pk1> OP_CHECKSIG <pk2> OP_CHECKSIGADD OP_2 OP_EQUAL
       const script = bitcoin.script.compile([
