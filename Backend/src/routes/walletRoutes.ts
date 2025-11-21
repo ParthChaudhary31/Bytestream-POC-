@@ -3,7 +3,8 @@ import { WalletController } from '../controllers/walletController';
 
 const router = Router();
 
-router.get('/generate', WalletController.generateWallet);
+router.get('/generate-wallet', WalletController.generateWallet);
+router.post('/create-taproot-multisig', WalletController.createTaprootMultisig);
 
 export default router;
 

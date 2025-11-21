@@ -5,7 +5,7 @@ import { AppError } from '../middleware/errorHandler';
 export class WalletController {
   /**
    * Generate a new wallet
-   * GET /api/v1/wallet/generate
+   * GET /api/v1/wallet/generate-wallet
    */
   static async generateWallet(
     req: Request,
@@ -15,11 +15,44 @@ export class WalletController {
     try {
       const wallet = WalletService.generateWallet();
       res.json({
-        success: true,
-        data: wallet,
+        address: wallet.address,
+        privateKey: wallet.privateKey,
+        publicKey: wallet.publicKey,
       });
     } catch (error) {
       const appError: AppError = new Error('Failed to generate wallet');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Create a Taproot multisig address
+   * POST /api/v1/wallet/create-taproot-multisig
+   */
+  static async createTaprootMultisig(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { pubkey1, pubkey2 } = req.body;
+
+      if (!pubkey1 || !pubkey2) {
+        const appError: AppError = new Error('Both pubkey1 and pubkey2 are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = WalletService.createTaprootMultisig(pubkey1, pubkey2);
+      res.json({
+        address: result.address,
+        scriptHex: result.scriptHex,
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error 
+        ? error 
+        : new Error('Failed to create taproot multisig');
       appError.statusCode = 500;
       next(appError);
     }
