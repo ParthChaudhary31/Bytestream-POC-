@@ -59,12 +59,12 @@ class ApiService {
   }
 
   // Create Taproot multisig
-  async createTaprootMultisig(pubkey1: string, pubkey2: string) {
+  async createTaprootMultisig(address1: string, address2: string) {
     return this.request<{ address: string; scriptHex: string }>(
       '/wallet/create-taproot-multisig',
       {
         method: 'POST',
-        body: JSON.stringify({ pubkey1, pubkey2 }),
+        body: JSON.stringify({ address1, address2 }),
       }
     );
   }

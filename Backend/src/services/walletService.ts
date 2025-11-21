@@ -12,6 +12,9 @@ initEccLib(ecc);
 const ECPair = ECPairFactory(ecc);
 const bip32 = BIP32Factory(ecc);
 
+// In-memory storage for address to publicKey mapping
+const addressToPublicKeyMap = new Map<string, string>();
+
 export interface Wallet {
   address: string;
   privateKey: string;
@@ -53,10 +56,18 @@ export class WalletService {
         network,
       });
 
+      const walletAddress = address || '';
+      const walletPublicKey = Buffer.from(child.publicKey).toString('hex');
+      
+      // Store address to publicKey mapping
+      if (walletAddress) {
+        addressToPublicKeyMap.set(walletAddress, walletPublicKey);
+      }
+
       return {
-        address: address || '',
+        address: walletAddress,
         privateKey: child.toWIF(),
-        publicKey: Buffer.from(child.publicKey).toString('hex'),
+        publicKey: walletPublicKey,
         mnemonic,
         derivationPath: path,
         network: 'testnet3', // bitcoin.networks.testnet refers to testnet3 (compatible with testnet4 for addresses)
@@ -68,11 +79,20 @@ export class WalletService {
 
   /**
    * Create a Taproot multisig address
+   * Accepts either addresses or public keys
    */
-  static createTaprootMultisig(pubkey1: string, pubkey2: string): TaprootMultisig {
+  static createTaprootMultisig(address1: string, address2: string): TaprootMultisig {
     try {
+      if (!address1 || !address2) {
+        throw new Error('Both address1 and address2 are required');
+      }
+
+      // Look up public keys from addresses
+      const pubkey1 = addressToPublicKeyMap.get(address1);
+      const pubkey2 = addressToPublicKeyMap.get(address2);
+
       if (!pubkey1 || !pubkey2) {
-        throw new Error('Both pubkey1 and pubkey2 are required');
+        throw new Error(`Public key not found for one or both addresses. Address1: ${address1}, Address2: ${address2}`);
       }
 
       const network = bitcoin.networks.testnet;

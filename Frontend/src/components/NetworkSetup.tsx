@@ -26,6 +26,7 @@ export function NetworkSetup() {
   const [copied, setCopied] = useState<string | null>(null);
 
   const allKeysGenerated = user1Keys && hubKeys && user2Keys;
+  console.log('allKeysGenerated', allKeysGenerated)
 
   const handleUser1KeysGenerated = (keys: UserKeys) => {
     setUser1Keys(keys);
@@ -43,7 +44,7 @@ export function NetworkSetup() {
     if (!user1Keys || !hubKeys) return;
     setLoadingUser1Hub(true);
     try {
-      const result = await apiService.createTaprootMultisig(user1Keys.publicKey, hubKeys.publicKey);
+      const result = await apiService.createTaprootMultisig(user1Keys.address, hubKeys.address);
       setUser1HubTaproot(result);
     } catch (error) {
       console.error('Failed to create taproot multisig:', error);
@@ -57,9 +58,7 @@ export function NetworkSetup() {
     if (!user2Keys || !hubKeys) return;
     setLoadingUser2Hub(true);
     try {
-      const pubkey1 = user2Keys.publicKey.startsWith('0x') ? user2Keys.publicKey : `0x${user2Keys.publicKey}`;
-      const pubkey2 = hubKeys.publicKey.startsWith('0x') ? hubKeys.publicKey : `0x${hubKeys.publicKey}`;
-      const result = await apiService.createTaprootMultisig(pubkey1, pubkey2);
+      const result = await apiService.createTaprootMultisig(user2Keys.address, hubKeys.address);
       setUser2HubTaproot(result);
     } catch (error) {
       console.error('Failed to create taproot multisig:', error);
@@ -94,15 +93,15 @@ export function NetworkSetup() {
             {allKeysGenerated && (
               <div className="mt-6 bg-[#1A1A1A] border-2 border-[#2C2C2C] rounded-lg p-6">
                 <div className="mb-4">
-                  <p className="text-[#888] text-xs mb-2">User 1 Public Key</p>
+                  <p className="text-[#888] text-xs mb-2">User 1 Address</p>
                   <div className="bg-[#0A0A0A] border border-[#2C2C2C] p-2 font-mono text-xs break-all text-white">
-                    {user1Keys?.publicKey}
+                    {user1Keys?.address}
                   </div>
                 </div>
                 <div className="mb-4">
-                  <p className="text-[#888] text-xs mb-2">Hub Public Key</p>
+                  <p className="text-[#888] text-xs mb-2">Hub Address</p>
                   <div className="bg-[#0A0A0A] border border-[#2C2C2C] p-2 font-mono text-xs break-all text-white">
-                    {hubKeys?.publicKey}
+                    {hubKeys?.address}
                   </div>
                 </div>
                 <Button
@@ -152,15 +151,15 @@ export function NetworkSetup() {
             {allKeysGenerated && (
               <div className="mt-6 bg-[#1A1A1A] border-2 border-[#2C2C2C] rounded-lg p-6">
                 <div className="mb-4">
-                  <p className="text-[#888] text-xs mb-2">User 2 Public Key</p>
+                  <p className="text-[#888] text-xs mb-2">User 2 Address</p>
                   <div className="bg-[#0A0A0A] border border-[#2C2C2C] p-2 font-mono text-xs break-all text-white">
-                    {user2Keys?.publicKey}
+                    {user2Keys?.address}
                   </div>
                 </div>
                 <div className="mb-4">
-                  <p className="text-[#888] text-xs mb-2">Hub Public Key</p>
+                  <p className="text-[#888] text-xs mb-2">Hub Address</p>
                   <div className="bg-[#0A0A0A] border border-[#2C2C2C] p-2 font-mono text-xs break-all text-white">
-                    {hubKeys?.publicKey}
+                    {hubKeys?.address}
                   </div>
                 </div>
                 <Button
