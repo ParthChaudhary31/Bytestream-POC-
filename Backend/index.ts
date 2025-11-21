@@ -4,8 +4,12 @@ import { ECPairFactory } from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
 import { Buffer } from 'buffer';
 
+import * as bip39 from 'bip39';
+import BIP32Factory from 'bip32';
+
 bitcoin.initEccLib(ecc);
 
+const bip32 = BIP32Factory(ecc);
 const ECPair = ECPairFactory(ecc);
 const app = express();
 const port = 3000;
@@ -15,13 +19,23 @@ app.use(express.json());
 app.get('/generate-wallet', (req, res) => {
     try {
         const network = bitcoin.networks.bitcoin;
-        const keyPair = (ECPair as any).makeRandom({ network });
-        const { address } = (bitcoin.payments.p2pkh as any)({ pubkey: keyPair.publicKey, network });
+
+        // Generate mnemonic
+        const mnemonic = bip39.generateMnemonic();
+        const seed = bip39.mnemonicToSeedSync(mnemonic);
+        const root = bip32.fromSeed(seed);
+
+        // Derive path m/44'/0'/0'/0/0 (Standard P2PKH derivation path)
+        const path = "m/44'/0'/0'/0/0";
+        const child = root.derivePath(path);
+
+        const { address } = (bitcoin.payments.p2pkh as any)({ pubkey: child.publicKey, network });
 
         res.json({
             address,
-            privateKey: keyPair.toWIF(),
-            publicKey: Buffer.from(keyPair.publicKey).toString('hex')
+            privateKey: child.toWIF(),
+            publicKey: Buffer.from(child.publicKey).toString('hex'),
+            mnemonic
         });
     } catch (error) {
         console.error(error);

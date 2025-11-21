@@ -18,6 +18,7 @@
     "tiny-secp256k1": "^2.2.4"
   },
   "devDependencies": {
+    "@types/bip39": "^2.4.2",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.1",
     "ts-node": "^10.9.2",
