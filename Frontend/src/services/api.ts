@@ -75,7 +75,9 @@ class ApiService {
     hubAddress: string,
     userPrivateKey: string,
     hubPrivateKey: string,
-    nonce?: number
+    nonce?: number,
+    taprootAddress?: string,
+    broadcastPayload?: string
   ) {
     return this.request<{ success: boolean; txid: string }>(
       '/wallet/create-transaction',
@@ -87,6 +89,8 @@ class ApiService {
           userPrivateKey,
           hubPrivateKey,
           nonce,
+          taprootAddress,
+          broadcastPayload,
         }),
       }
     );

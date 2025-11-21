@@ -155,9 +155,20 @@ export class WalletService {
     hubAddress: string,
     userPrivateKey: string,
     hubPrivateKey: string,
-    nonce?: number
+    nonce?: number,
+    taprootAddress?: string,
+    broadcastPayload?: string
   ): Promise<string> {
     try {
+      // If broadcastPayload is provided, use it directly
+      if (broadcastPayload) {
+        const broadcastRes = await axios.post(
+          'https://mempool.space/testnet/api/tx',
+          broadcastPayload
+        );
+        return broadcastRes.data; // txid
+      }
+
       const network = bitcoin.networks.testnet;
 
       // 1. Derive keys and reconstruct multisig script
@@ -189,16 +200,33 @@ export class WalletService {
         output: script,
       };
 
-      const { address: multisigAddress, output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
-        internalPubkey: Buffer.from(
-          '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
-          'hex'
-        ),
+      // Always construct the scriptPubKey from the script
+      const internalPubkey = Buffer.from(
+        '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+        'hex'
+      );
+      
+      const { address: derivedMultisigAddress, output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
+        internalPubkey,
         scriptTree: tapLeaf,
         network,
       });
 
-      if (!multisigAddress) throw new Error('Failed to derive multisig address');
+      // Use provided taproot address if available, otherwise use derived address
+      const multisigAddress = taprootAddress || derivedMultisigAddress;
+
+      if (!multisigAddress) throw new Error('Failed to derive or use multisig address');
+      if (!scriptPubKey) throw new Error('Failed to derive scriptPubKey');
+
+      // Construct control block for taproot script path spending
+      // Control block format: [leafVersion (1 byte)] [internalPubkey (32 bytes)] [merklePath (variable)]
+      // For a single leaf script tree, merkle path is empty
+      const leafVersion = 0xC0; // Tapscript leaf version
+      const controlBlock = Buffer.concat([
+        Buffer.from([leafVersion]),
+        internalPubkey,
+        // Empty merkle path for single leaf
+      ]);
 
       // 2. Fetch UTXOs
       const { data: utxos } = await axios.get(
@@ -232,16 +260,9 @@ export class WalletService {
           },
           tapLeafScript: [
             {
-              leafVersion: 192,
+              leafVersion: 192, // 0xC0 in decimal
               script: script,
-              controlBlock: (bitcoin.payments.p2tr as any)({
-                internalPubkey: Buffer.from(
-                  '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
-                  'hex'
-                ),
-                scriptTree: tapLeaf,
-                network,
-              }).witness![utxo.vout === 0 ? 1 : 1], // Simplified control block retrieval - in real app need proper merkle proof
+              controlBlock: controlBlock,
             },
           ],
           sequence: 144, // Must match OP_CHECKSEQUENCEVERIFY
