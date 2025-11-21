@@ -50,10 +50,15 @@
       "devDependencies": {
           "@types/node": "^20.10.0",
           "@vitejs/plugin-react-swc": "^3.10.2",
+          "dotenv-cli": "^7.4.2",
           "vite": "6.3.5"
       },
       "scripts": {
           "dev": "vite",
+          "start": "vite",
+          "start:dev": "NODE_ENV=development dotenv -e .env.dev -- vite",
+          "start:staging": "NODE_ENV=staging dotenv -e .env.staging -- vite",
+          "start:prod": "NODE_ENV=production dotenv -e .env.prod -- vite build && vite preview",
           "build": "vite build"
       }
   }
