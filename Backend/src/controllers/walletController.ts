@@ -72,9 +72,9 @@ export class WalletController {
     next: NextFunction
   ) {
     try {
-      const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, nonce } = req.body;
+      const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, multisigAddress, nonce } = req.body;
 
-      if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey) {
+      if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey || !multisigAddress) {
         const appError: AppError = new Error('Missing required fields');
         appError.statusCode = 400;
         return next(appError);
@@ -85,6 +85,7 @@ export class WalletController {
         hubAddress,
         userPrivateKey,
         hubPrivateKey,
+        multisigAddress,
         nonce
       );
 

@@ -155,6 +155,7 @@ export class WalletService {
     hubAddress: string,
     userPrivateKey: string,
     hubPrivateKey: string,
+    multisigAddress: string,
     nonce?: number
   ): Promise<string> {
     try {
@@ -189,7 +190,7 @@ export class WalletService {
         output: script,
       };
 
-      const { address: multisigAddress, output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
+      const { output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
         internalPubkey: Buffer.from(
           '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
           'hex'
@@ -198,7 +199,7 @@ export class WalletService {
         network,
       });
 
-      if (!multisigAddress) throw new Error('Failed to derive multisig address');
+      // if (!multisigAddress) throw new Error('Failed to derive multisig address');
 
       // 2. Fetch UTXOs
       const { data: utxos } = await axios.get(
