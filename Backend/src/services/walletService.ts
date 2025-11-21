@@ -17,6 +17,8 @@ export interface Wallet {
   privateKey: string;
   publicKey?: string;
   mnemonic?: string;
+  derivationPath?: string;
+  network?: string;
 }
 
 export interface TaprootMultisig {
@@ -30,7 +32,7 @@ export class WalletService {
    */
   static generateWallet(): Wallet {
     try {
-      const network = bitcoin.networks.bitcoin;
+      const network = bitcoin.networks.testnet;
       
       // Generate mnemonic
       const mnemonic = bip39.generateMnemonic();
@@ -39,10 +41,10 @@ export class WalletService {
       const seed = bip39.mnemonicToSeedSync(mnemonic);
       
       // Create root from seed
-      const root = bip32.fromSeed(seed);
+      const root = bip32.fromSeed(seed, network);
       
-      // Derive path m/44'/0'/0'/0/0 (Standard P2PKH derivation path)
-      const path = "m/44'/0'/0'/0/0";
+      // Derive path m/44'/1'/0'/0/0 (Testnet P2PKH derivation path - coin type 1 for testnet)
+      const path = "m/44'/1'/0'/0/0";
       const child = root.derivePath(path);
       
       // Generate address from derived public key
@@ -56,6 +58,8 @@ export class WalletService {
         privateKey: child.toWIF(),
         publicKey: Buffer.from(child.publicKey).toString('hex'),
         mnemonic,
+        derivationPath: path,
+        network: 'testnet3', // bitcoin.networks.testnet refers to testnet3 (compatible with testnet4 for addresses)
       };
     } catch (error) {
       throw new Error(`Failed to generate wallet: ${error}`);
@@ -71,7 +75,7 @@ export class WalletService {
         throw new Error('Both pubkey1 and pubkey2 are required');
       }
 
-      const network = bitcoin.networks.bitcoin;
+      const network = bitcoin.networks.testnet;
 
       // Remove "0x" prefix if present
       const cleanPubkey1 = pubkey1.startsWith('0x') ? pubkey1.slice(2) : pubkey1;

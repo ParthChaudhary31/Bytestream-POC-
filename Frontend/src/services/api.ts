@@ -46,7 +46,14 @@ class ApiService {
 
   // Wallet endpoints
   async generateWallet() {
-    return this.request<{ address: string; privateKey: string; publicKey: string }>(
+    return this.request<{ 
+      address: string; 
+      privateKey: string; 
+      publicKey: string; 
+      mnemonic: string;
+      derivationPath: string;
+      network: string;
+    }>(
       '/wallet/generate-wallet'
     );
   }
