@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Onboarding } from './components/Onboarding';
+import { NetworkSetup } from './components/NetworkSetup';
 import { Dashboard } from './components/Dashboard';
 import { Deposit } from './components/Deposit';
 import { Send } from './components/Send';
@@ -173,7 +174,7 @@ export default function App() {
       {/* Content */}
       <div className="relative z-10">
         {currentScreen === 'onboarding' ? (
-          <Onboarding onComplete={initializeWallet} />
+          <NetworkSetup />
         ) : (
           <>
             <Navigation
