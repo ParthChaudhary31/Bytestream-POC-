@@ -2,16 +2,21 @@ import * as bitcoin from 'bitcoinjs-lib';
 import { initEccLib } from 'bitcoinjs-lib';
 import { ECPairFactory } from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
+import * as bip39 from 'bip39';
+import BIP32Factory from 'bip32';
+import { Buffer } from 'buffer';
 
 // Initialize ECC library for bitcoinjs-lib
 initEccLib(ecc);
 
 const ECPair = ECPairFactory(ecc);
+const bip32 = BIP32Factory(ecc);
 
 export interface Wallet {
   address: string;
   privateKey: string;
   publicKey?: string;
+  mnemonic?: string;
 }
 
 export interface TaprootMultisig {
@@ -21,21 +26,36 @@ export interface TaprootMultisig {
 
 export class WalletService {
   /**
-   * Generate a new Bitcoin wallet
+   * Generate a new Bitcoin wallet using mnemonic (BIP39) and BIP32 derivation
    */
   static generateWallet(): Wallet {
     try {
       const network = bitcoin.networks.bitcoin;
-      const keyPair = (ECPair as any).makeRandom({ network });
+      
+      // Generate mnemonic
+      const mnemonic = bip39.generateMnemonic();
+      
+      // Convert mnemonic to seed
+      const seed = bip39.mnemonicToSeedSync(mnemonic);
+      
+      // Create root from seed
+      const root = bip32.fromSeed(seed);
+      
+      // Derive path m/44'/0'/0'/0/0 (Standard P2PKH derivation path)
+      const path = "m/44'/0'/0'/0/0";
+      const child = root.derivePath(path);
+      
+      // Generate address from derived public key
       const { address } = (bitcoin.payments.p2pkh as any)({
-        pubkey: keyPair.publicKey,
+        pubkey: child.publicKey,
         network,
       });
 
       return {
         address: address || '',
-        privateKey: keyPair.toWIF(),
-        publicKey: Buffer.from(keyPair.publicKey).toString('hex'),
+        privateKey: child.toWIF(),
+        publicKey: Buffer.from(child.publicKey).toString('hex'),
+        mnemonic,
       };
     } catch (error) {
       throw new Error(`Failed to generate wallet: ${error}`);

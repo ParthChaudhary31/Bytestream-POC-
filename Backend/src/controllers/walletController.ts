@@ -18,6 +18,7 @@ export class WalletController {
         address: wallet.address,
         privateKey: wallet.privateKey,
         publicKey: wallet.publicKey,
+        mnemonic: wallet.mnemonic,
       });
     } catch (error) {
       const appError: AppError = new Error('Failed to generate wallet');
