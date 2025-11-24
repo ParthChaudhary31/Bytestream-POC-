@@ -287,8 +287,28 @@ export function NetworkSetup() {
 
   return (
     <div className="min-h-screen w-full flex flex-col px-6 py-8 relative">
-      {/* Clear Redux Button - Top Right */}
-      <div className="absolute top-6 right-6">
+      {/* Top Right Buttons */}
+      <div className="absolute top-6 right-6 flex gap-2">
+        <Button
+          onClick={async () => {
+            // Check for multisig address from taproot
+            const multisigAddr = manualMultisigAddressUser1 || user1HubTaproot?.address || 
+                                 manualMultisigAddressUser2 || user2HubTaproot?.address;
+            
+            if (multisigAddr) {
+              // Copy to clipboard
+              await navigator.clipboard.writeText(multisigAddr);
+              alert(`Multisig Address copied to clipboard: ${multisigAddr}\nOpening faucet...`);
+            }
+            
+            // Open faucet page
+            window.open('https://coinfaucet.eu/en/btc-testnet/', '_blank');
+          }}
+          className="bg-[#10B981] hover:bg-[#10B981]/90 text-white"
+          size="sm"
+        >
+          Faucet
+        </Button>
         <Button
           onClick={handleClearRedux}
           variant="destructive"
