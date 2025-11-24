@@ -161,7 +161,9 @@ export class WalletService {
     try {
       const network = bitcoin.networks.testnet;
 
+      console.log('Starting createAndBroadcastTransaction...');
       // 1. Derive keys and reconstruct multisig script
+      console.log('Deriving keys...');
       const userKey = ECPair.fromWIF(userPrivateKey, network);
       const hubKey = ECPair.fromWIF(hubPrivateKey, network);
 
@@ -202,15 +204,18 @@ export class WalletService {
       // if (!multisigAddress) throw new Error('Failed to derive multisig address');
 
       // 2. Fetch UTXOs
+      console.log(`Fetching UTXOs for address: ${multisigAddress}`);
       const { data: utxos } = await axios.get(
         `https://mempool.space/testnet/api/address/${multisigAddress}/utxo`
       );
+      console.log(`Found ${utxos?.length || 0} UTXOs`);
 
       if (!utxos || utxos.length === 0) {
         throw new Error('No UTXOs found for the multisig address');
       }
 
       // 3. Create PSBT
+      console.log('Creating PSBT...');
       const psbt = new bitcoin.Psbt({ network });
 
       // Target amount + fee (estimation)
@@ -278,25 +283,33 @@ export class WalletService {
       // NOTE: The script is <144> CSV DROP <pk1> CHECKSIG <pk2> CHECKSIGADD 2 EQUAL
       // This means BOTH keys must sign.
 
+      console.log('Signing inputs...');
       psbt.signAllInputs(userKey);
       psbt.signAllInputs(hubKey);
 
+      console.log('Finalizing inputs...');
       psbt.finalizeAllInputs();
 
       // 6. Broadcast
+      console.log('Extracting transaction...');
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
 
+      console.log('Broadcasting transaction...');
       const broadcastRes = await axios.post(
         'https://mempool.space/testnet/api/tx',
         txHex
       );
+      console.log('Broadcast success:', broadcastRes.data);
 
       return broadcastRes.data; // txid
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('Detailed error:', error);
-      throw new Error(`Failed to create and broadcast transaction: ${error}`);
+      if (error.cause) console.error('Error cause:', error.cause);
+      if (error.errors) console.error('Aggregate errors:', error.errors); // For AggregateError
+
+      throw new Error(`Failed to create and broadcast transaction: ${error.message || error}`);
     }
   }
 }
