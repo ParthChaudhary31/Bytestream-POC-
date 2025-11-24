@@ -72,14 +72,14 @@ export class WalletController {
     next: NextFunction
   ) {
     try {
-      const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, nonce, taprootAddress, broadcastPayload } = req.body;
+      const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, nonce, taprootAddress, broadcastPayload,multisigAddress } = req.body;
 
       // If broadcastPayload is provided, we can skip validation of other fields
       if (!broadcastPayload) {
-        if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey) {
-          const appError: AppError = new Error('Missing required fields');
-          appError.statusCode = 400;
-          return next(appError);
+        if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey ||!multisigAddress) {
+        const appError: AppError = new Error('Missing required fields');
+        appError.statusCode = 400;
+        return next(appError);
         }
       }
 
@@ -90,7 +90,8 @@ export class WalletController {
         hubPrivateKey,
         nonce,
         taprootAddress,
-        broadcastPayload
+        broadcastPayload,
+        multisigAddress
       );
 
       res.json({

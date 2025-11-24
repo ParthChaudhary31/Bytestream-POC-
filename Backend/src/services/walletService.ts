@@ -157,7 +157,8 @@ export class WalletService {
     hubPrivateKey: string,
     nonce?: number,
     taprootAddress?: string,
-    broadcastPayload?: string
+    broadcastPayload?: string,
+    multisigAddress?: string
   ): Promise<string> {
     try {
       // If broadcastPayload is provided, use it directly
@@ -183,9 +184,10 @@ export class WalletService {
       const pk1 = toXOnly(Buffer.from(userKey.publicKey));
       const pk2 = toXOnly(Buffer.from(hubKey.publicKey));
 
-      // Construct script: <144> OP_CHECKSEQUENCEVERIFY OP_DROP <pk1> OP_CHECKSIG <pk2> OP_CHECKSIGADD OP_2 OP_EQUAL
+      // Construct script: <0> OP_CHECKSEQUENCEVERIFY OP_DROP <pk1> OP_CHECKSIG <pk2> OP_CHECKSIGADD OP_2 OP_EQUAL
+      // Using 0 blocks for immediate spending (can be changed to 144 for production)
       const script = bitcoin.script.compile([
-        bitcoin.script.number.encode(144), // 144 blocks
+        bitcoin.script.number.encode(0), // 0 blocks for immediate spending (change to 144 for production)
         bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
         bitcoin.opcodes.OP_DROP,
         pk1,
@@ -201,36 +203,50 @@ export class WalletService {
       };
 
       // Always construct the scriptPubKey from the script
-      const internalPubkey = Buffer.from(
-        '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
-        'hex'
-      );
-      
-      const { address: derivedMultisigAddress, output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
-        internalPubkey,
+      const { output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
+        internalPubkey: Buffer.from(
+          '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+          'hex'
+        ),
         scriptTree: tapLeaf,
         network,
       });
 
-      // Use provided taproot address if available, otherwise use derived address
-      const multisigAddress = taprootAddress || derivedMultisigAddress;
+      // Use provided multisigAddress if available, otherwise use taprootAddress, otherwise derive
+      const finalMultisigAddress = multisigAddress || taprootAddress || (() => {
+        const { address } = (bitcoin.payments.p2tr as any)({
+          internalPubkey: Buffer.from(
+            '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+            'hex'
+          ),
+          scriptTree: tapLeaf,
+          network,
+        });
+        return address;
+      })();
 
-      if (!multisigAddress) throw new Error('Failed to derive or use multisig address');
+      // if (!finalMultisigAddress) throw new Error('Failed to derive or use multisig address');
       if (!scriptPubKey) throw new Error('Failed to derive scriptPubKey');
+
+      // Internal pubkey for taproot (x-only, 32 bytes)
+      const tapInternalKey = Buffer.from(
+        '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+        'hex'
+      );
 
       // Construct control block for taproot script path spending
       // Control block format: [leafVersion (1 byte)] [internalPubkey (32 bytes)] [merklePath (variable)]
-      // For a single leaf script tree, merkle path is empty
+      // For a single leaf script tree, merkle path is empty (no siblings)
       const leafVersion = 0xC0; // Tapscript leaf version
       const controlBlock = Buffer.concat([
         Buffer.from([leafVersion]),
-        internalPubkey,
-        // Empty merkle path for single leaf
+        tapInternalKey,
+        // Empty merkle path for single leaf (no siblings to include)
       ]);
 
       // 2. Fetch UTXOs
       const { data: utxos } = await axios.get(
-        `https://mempool.space/testnet/api/address/${multisigAddress}/utxo`
+        `https://mempool.space/testnet/api/address/${finalMultisigAddress}/utxo`
       );
 
       if (!utxos || utxos.length === 0) {
@@ -265,7 +281,7 @@ export class WalletService {
               controlBlock: controlBlock,
             },
           ],
-          sequence: 144, // Must match OP_CHECKSEQUENCEVERIFY
+          sequence: 0, // Set to 0 blocks for immediate spending (CSV will pass)
         });
 
         totalInput += utxo.value;
@@ -286,7 +302,7 @@ export class WalletService {
       const change = totalInput - sendAmount - fee;
       if (change > 546) { // Dust limit
         psbt.addOutput({
-          address: multisigAddress,
+          address: finalMultisigAddress,
           value: BigInt(change),
         });
       }
@@ -307,12 +323,27 @@ export class WalletService {
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
 
+      try {
       const broadcastRes = await axios.post(
         'https://mempool.space/testnet/api/tx',
-        txHex
+          txHex,
+          {
+            headers: {
+              'Content-Type': 'text/plain',
+            },
+          }
       );
 
       return broadcastRes.data; // txid
+      } catch (broadcastError: any) {
+        console.error('Broadcast error details:', {
+          status: broadcastError.response?.status,
+          statusText: broadcastError.response?.statusText,
+          data: broadcastError.response?.data,
+          txHex: txHex.substring(0, 100) + '...',
+        });
+        throw new Error(`Broadcast failed: ${broadcastError.response?.data || broadcastError.message}`);
+      }
 
     } catch (error) {
       console.error('Detailed error:', error);

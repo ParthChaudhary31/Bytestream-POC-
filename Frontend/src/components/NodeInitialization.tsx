@@ -68,11 +68,11 @@ export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }:
         <h3 className="text-white text-lg font-semibold mb-2">{userLabel}</h3>
       </div>
 
-      <div className="space-y-4">
-        {/* Address */}
-        <div>
-          <label className="block text-[#888] text-xs mb-2">Address</label>
-          <div className="flex gap-2">
+        <div className="space-y-4">
+            {/* Address */}
+            <div>
+              <label className="block text-[#888] text-xs mb-2">Address</label>
+              <div className="flex gap-2">
             <Input
               type="text"
               value={editableKeys.address}
@@ -80,21 +80,21 @@ export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }:
               className="flex-1 bg-[#0A0A0A] border border-[#2C2C2C] p-3 font-mono text-xs text-white"
               placeholder="Enter address or generate keys"
             />
-            <Button
+                <Button
               onClick={() => handleCopy('address', editableKeys.address)}
-              size="sm"
-              className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
+                  size="sm"
+                  className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
               disabled={!editableKeys.address}
-            >
-              {copied === 'address' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            </Button>
-          </div>
-        </div>
+                >
+                  {copied === 'address' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
 
-        {/* Public Key */}
-        <div>
-          <label className="block text-[#888] text-xs mb-2">Public Key</label>
-          <div className="flex gap-2">
+            {/* Public Key */}
+            <div>
+              <label className="block text-[#888] text-xs mb-2">Public Key</label>
+              <div className="flex gap-2">
             <Input
               type="text"
               value={editableKeys.publicKey}
@@ -102,21 +102,21 @@ export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }:
               className="flex-1 bg-[#0A0A0A] border border-[#2C2C2C] p-3 font-mono text-xs text-white"
               placeholder="Enter public key or generate keys"
             />
-            <Button
+                <Button
               onClick={() => handleCopy('publicKey', editableKeys.publicKey)}
-              size="sm"
-              className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
+                  size="sm"
+                  className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
               disabled={!editableKeys.publicKey}
-            >
-              {copied === 'publicKey' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            </Button>
-          </div>
-        </div>
+                >
+                  {copied === 'publicKey' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
 
-        {/* Private Key */}
-        <div>
-          <label className="block text-[#888] text-xs mb-2">Private Key</label>
-          <div className="flex gap-2">
+            {/* Private Key */}
+            <div>
+              <label className="block text-[#888] text-xs mb-2">Private Key</label>
+              <div className="flex gap-2">
             <Input
               type="text"
               value={editableKeys.privateKey}
@@ -124,19 +124,19 @@ export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }:
               className="flex-1 bg-[#0A0A0A] border border-[#EF4444] p-3 font-mono text-xs text-white"
               placeholder="Enter private key or generate keys"
             />
-            <Button
+                <Button
               onClick={() => handleCopy('privateKey', editableKeys.privateKey)}
-              size="sm"
-              className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
+                  size="sm"
+                  className="bg-[#2C2C2C] hover:bg-[#3C3C3C] text-white px-3"
               disabled={!editableKeys.privateKey}
-            >
-              {copied === 'privateKey' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            </Button>
-          </div>
-          <p className="text-[#EF4444] text-xs mt-1">
-            ⚠ Keep this private key secure. Never share it.
-          </p>
-        </div>
+                >
+                  {copied === 'privateKey' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+              <p className="text-[#EF4444] text-xs mt-1">
+                ⚠ Keep this private key secure. Never share it.
+              </p>
+            </div>
 
         {/* Save Button */}
         <Button
@@ -165,7 +165,7 @@ export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }:
             </span>
           )}
         </Button>
-      </div>
+        </div>
     </div>
   );
 }
