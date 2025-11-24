@@ -355,22 +355,39 @@ export class WalletService {
         throw new Error('No UTXOs found for the multisig address');
       }
 
-      // 3. Create PSBT
+      // 3. Fetch Fee Rate
+      console.log('Fetching fee rates...');
+      let feeRate = 10; // Default fallback
+      try {
+        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        feeRate = fees.fastestFee;
+        console.log(`Current fastest fee rate: ${feeRate} sat/vB`);
+      } catch (error) {
+        console.warn('Failed to fetch fee rates, using default:', feeRate);
+      }
+
+      // 4. Create PSBT
       console.log('Creating PSBT...');
       const psbt = new bitcoin.Psbt({ network });
 
-      // Target amount + fee (estimation)
       const sendAmount = 10000; // 0.0001 BTC
-      const fee = 1000; // 1000 sats fee
-      let totalInput = 0;
 
-      // Add inputs
+      // Fee Estimation Constants
+      const INPUT_SIZE = 150; // Conservative estimate for Taproot script path spend (vBytes)
+      const OUTPUT_SIZE = 43; // P2TR/P2WPKH output (vBytes)
+      const OVERHEAD = 10; // Version, locktime, etc. (vBytes)
+
+      let totalInput = 0;
+      let inputsToAdd: any[] = [];
+      let estimatedFee = 0;
+
+      // Select UTXOs
       for (const utxo of utxos) {
         const txHex = await axios.get(
           `https://mempool.space/testnet/api/tx/${utxo.txid}/hex`
         );
 
-        psbt.addInput({
+        inputsToAdd.push({
           hash: utxo.txid,
           index: utxo.vout,
           witnessUtxo: {
@@ -388,21 +405,35 @@ export class WalletService {
         });
 
         totalInput += utxo.value;
-        if (totalInput >= sendAmount + fee) break;
+
+        // Calculate required amount with dynamic fee
+        // We have 2 outputs (Recipient + Change) in most cases
+        const numInputs = inputsToAdd.length;
+        const estimatedVSize = (numInputs * INPUT_SIZE) + (2 * OUTPUT_SIZE) + OVERHEAD;
+        estimatedFee = estimatedVSize * feeRate;
+
+        if (totalInput >= sendAmount + estimatedFee) break;
       }
 
-      if (totalInput < sendAmount + fee) {
-        throw new Error('Insufficient funds');
+      if (totalInput < sendAmount + estimatedFee) {
+        throw new Error(`Insufficient funds. Have: ${totalInput}, Need: ${sendAmount + estimatedFee} (Amount: ${sendAmount} + Fee: ${estimatedFee})`);
       }
 
-      // 4. Add outputs
+      console.log(`Estimated Fee: ${estimatedFee} sats (Rate: ${feeRate} sat/vB, vSize: ~${estimatedFee / feeRate})`);
+
+      // Add inputs to PSBT
+      for (const input of inputsToAdd) {
+        psbt.addInput(input);
+      }
+
+      // 5. Add outputs
       psbt.addOutput({
         address: 'mieqF8AK1SLqYqH75t3Sp8oATzFN5jpt7L',
         value: BigInt(sendAmount),
       });
 
       // Change output
-      const change = totalInput - sendAmount - fee;
+      const change = totalInput - sendAmount - estimatedFee;
       if (change > 546) { // Dust limit
         psbt.addOutput({
           address: finalMultisigAddress,
@@ -410,7 +441,7 @@ export class WalletService {
         });
       }
 
-      // 5. Sign Input
+      // 6. Sign Input
       console.log('Signing inputs...');
       for (const signer of signers) {
         psbt.signAllInputs(signer);
@@ -419,10 +450,13 @@ export class WalletService {
       console.log('Finalizing inputs...');
       psbt.finalizeAllInputs();
 
-      // 6. Broadcast
+      // 7. Broadcast
       console.log('Extracting transaction...');
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
+      const virtualSize = tx.virtualSize();
+      console.log(`Actual Transaction vSize: ${virtualSize} vBytes`);
+      console.log(`Actual Fee Rate: ${(totalInput - Number(tx.outs.reduce((acc, out) => acc + Number(out.value), 0))) / virtualSize} sat/vB`);
 
       try {
         const broadcastRes = await axios.post(
