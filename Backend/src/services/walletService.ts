@@ -357,7 +357,7 @@ export class WalletService {
 
       // 3. Fetch Fee Rate
       console.log('Fetching fee rates...');
-      let feeRate = 10; // Default fallback
+      let feeRate = 7.5; // Default fallback
       try {
         const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
         feeRate = fees.fastestFee;
