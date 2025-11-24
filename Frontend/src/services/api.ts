@@ -69,6 +69,35 @@ class ApiService {
     );
   }
 
+  // Create and broadcast transaction
+  async createTransaction(
+    userAddress: string,
+    hubAddress: string,
+    userPrivateKey: string,
+    hubPrivateKey: string,
+    nonce?: number,
+    taprootAddress?: string,
+    broadcastPayload?: string,
+    multisigAddress?: string
+  ) {
+    return this.request<{ success: boolean; txid: string }>(
+      '/wallet/create-transaction',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          userAddress,
+          hubAddress,
+          userPrivateKey,
+          hubPrivateKey,
+          nonce,
+          taprootAddress,
+          broadcastPayload,
+          multisigAddress,
+        }),
+      }
+    );
+  }
+
   // Health check
   async healthCheck() {
     return this.request<{ status: string; timestamp: string; environment: string }>(

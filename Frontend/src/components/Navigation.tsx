@@ -1,4 +1,5 @@
-import { WalletState, Screen } from '../App';
+import { Screen } from '../App';
+import { WalletState } from '../store/slices/walletSlice';
 import { Copy } from 'lucide-react';
 
 interface NavigationProps {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Transaction } from '../App';
+import { Transaction } from '../store/slices/walletSlice';
 import { Button } from './ui/button';
 import { ArrowLeft, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
@@ -106,7 +106,9 @@ export function Audit({ transactions, onBack, showToast }: AuditProps) {
                             <span className="font-mono text-[#888] text-sm">{tx.counterparty}</span>
                           </div>
                           <div className="text-[#888] text-sm">
-                            {tx.timestamp.toLocaleString()}
+                            {typeof tx.timestamp === 'string' 
+                              ? new Date(tx.timestamp).toLocaleString() 
+                              : tx.timestamp.toLocaleString()}
                           </div>
                         </div>
                       </div>

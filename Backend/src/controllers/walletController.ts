@@ -72,12 +72,21 @@ export class WalletController {
     next: NextFunction
   ) {
     try {
+<<<<<<< HEAD
       const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, multisigAddress, nonce } = req.body;
 
       if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey || !multisigAddress) {
+=======
+      const { userAddress, hubAddress, userPrivateKey, hubPrivateKey, nonce, taprootAddress, broadcastPayload,multisigAddress } = req.body;
+
+      // If broadcastPayload is provided, we can skip validation of other fields
+      if (!broadcastPayload) {
+        if (!userAddress || !hubAddress || !userPrivateKey || !hubPrivateKey ||!multisigAddress) {
+>>>>>>> c7cd2e0beb37f197132ecbe79923f37e9ccfa888
         const appError: AppError = new Error('Missing required fields');
         appError.statusCode = 400;
         return next(appError);
+        }
       }
 
       const txid = await WalletService.createAndBroadcastTransaction(
@@ -85,8 +94,15 @@ export class WalletController {
         hubAddress,
         userPrivateKey,
         hubPrivateKey,
+<<<<<<< HEAD
         multisigAddress,
         nonce
+=======
+        nonce,
+        taprootAddress,
+        broadcastPayload,
+        multisigAddress
+>>>>>>> c7cd2e0beb37f197132ecbe79923f37e9ccfa888
       );
 
       res.json({

@@ -8,60 +8,32 @@ import { Settle } from './components/Settle';
 import { SettlementStatus } from './components/SettlementStatus';
 import { Audit } from './components/Audit';
 import { Navigation } from './components/Navigation';
+import { useAppDispatch, useAppSelector } from './store/hooks';
+import {
+  initializeWallet,
+  updateBalance,
+  addTransaction,
+  startSettlement,
+  updateSettlementStatus,
+  completeSettlement,
+  type Transaction,
+  type SettlementData,
+} from './store/slices/walletSlice';
 
 export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit';
 
-export interface WalletState {
-  initialized: boolean;
-  address: string;
-  walletId: string;
-  totalBalance: number;
-  availableL2: number;
-  frozen: number;
-  onChain: number;
-  hubOnline: boolean;
-  transactions: Transaction[];
-  settlementInProgress: boolean;
-  settlementData: SettlementData | null;
-}
-
-export interface Transaction {
-  id: string;
-  type: 'intent' | 'settlement' | 'deposit';
-  counterparty: string;
-  amount: number;
-  fee: number;
-  status: 'success' | 'confirming' | 'pending';
-  timestamp: Date;
-  memo?: string;
-}
-
-export interface SettlementData {
-  amount: number;
-  fee: number;
-  priority: 'economy' | 'standard' | 'priority';
-  txid: string;
-  status: 'frozen' | 'signing' | 'broadcasting' | 'mempool' | 'confirmed';
-  destination: string;
-}
-
 export default function App() {
+  const dispatch = useAppDispatch();
+  const walletState = useAppSelector((state) => state.wallet);
   const [currentScreen, setCurrentScreen] = useState<Screen>('onboarding');
-  const [walletState, setWalletState] = useState<WalletState>({
-    initialized: false,
-    address: '',
-    walletId: '',
-    totalBalance: 0,
-    availableL2: 0,
-    frozen: 0,
-    onChain: 0,
-    hubOnline: true,
-    transactions: [],
-    settlementInProgress: false,
-    settlementData: null,
-  });
-
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Check if wallet is initialized and set screen accordingly
+  useEffect(() => {
+    if (walletState.initialized && currentScreen === 'onboarding') {
+      setCurrentScreen('dashboard');
+    }
+  }, [walletState.initialized, currentScreen]);
 
   useEffect(() => {
     if (toast) {
@@ -74,76 +46,60 @@ export default function App() {
     setToast({ message, type });
   };
 
-  const initializeWallet = () => {
-    setWalletState({
-      ...walletState,
-      initialized: true,
-      address: 'bc1p4xh7k2mnw3y8vqz9x4l2p8r6t5w7a9c3e5g7h',
-      walletId: 'bc1p...xy7z',
-      totalBalance: 1250000,
-      availableL2: 1000000,
-      frozen: 0,
-      onChain: 250000,
-      hubOnline: true,
-      transactions: [
-        {
-          id: '1',
-          type: 'intent',
-          counterparty: 'bc1...user',
-          amount: -5000,
-          fee: 24,
-          status: 'success',
-          timestamp: new Date(Date.now() - 120000),
-        },
-        {
-          id: '2',
-          type: 'deposit',
-          counterparty: 'Self',
-          amount: 50000,
-          fee: 0,
-          status: 'success',
-          timestamp: new Date(Date.now() - 3600000),
-        },
-      ],
-    });
+  const handleInitializeWallet = () => {
+    dispatch(
+      initializeWallet({
+        address: 'bc1p4xh7k2mnw3y8vqz9x4l2p8r6t5w7a9c3e5g7h',
+        walletId: 'bc1p...xy7z',
+        totalBalance: 1250000,
+        availableL2: 1000000,
+        frozen: 0,
+        onChain: 250000,
+        hubOnline: true,
+        transactions: [
+          {
+            id: '1',
+            type: 'intent',
+            counterparty: 'bc1...user',
+            amount: -5000,
+            fee: 24,
+            status: 'success',
+            timestamp: new Date(Date.now() - 120000).toISOString(),
+          },
+          {
+            id: '2',
+            type: 'deposit',
+            counterparty: 'Self',
+            amount: 50000,
+            fee: 0,
+            status: 'success',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+          },
+        ],
+      })
+    );
     setCurrentScreen('dashboard');
   };
 
-  const addTransaction = (transaction: Transaction) => {
-    setWalletState({
-      ...walletState,
-      transactions: [transaction, ...walletState.transactions],
-    });
+  const handleAddTransaction = (transaction: Transaction) => {
+    dispatch(
+      addTransaction({
+        ...transaction,
+        timestamp: transaction.timestamp instanceof Date ? transaction.timestamp.toISOString() : transaction.timestamp,
+      })
+    );
   };
 
-  const updateBalance = (availableL2: number, frozen: number, onChain: number) => {
-    setWalletState({
-      ...walletState,
-      availableL2,
-      frozen,
-      onChain,
-      totalBalance: availableL2 + frozen + onChain,
-    });
+  const handleUpdateBalance = (availableL2: number, frozen: number, onChain: number) => {
+    dispatch(updateBalance({ availableL2, frozen, onChain }));
   };
 
-  const startSettlement = (settlementData: SettlementData) => {
-    setWalletState({
-      ...walletState,
-      settlementInProgress: true,
-      settlementData,
-      availableL2: walletState.availableL2 - settlementData.amount - settlementData.fee,
-      frozen: settlementData.amount,
-    });
+  const handleStartSettlement = (settlementData: SettlementData) => {
+    dispatch(startSettlement(settlementData));
   };
 
-  const completeSettlement = () => {
-    setWalletState({
-      ...walletState,
-      settlementInProgress: false,
-      settlementData: null,
-      frozen: 0,
-      onChain: walletState.onChain + (walletState.settlementData?.amount || 0),
-    });
+  const handleCompleteSettlement = () => {
+    dispatch(completeSettlement());
     showToast('Settlement Complete! Funds moved to L1.', 'success');
   };
 
@@ -197,8 +153,8 @@ export default function App() {
                   onBack={() => setCurrentScreen('dashboard')}
                   showToast={showToast}
                   onDeposit={(amount) => {
-                    updateBalance(walletState.availableL2 + amount, walletState.frozen, walletState.onChain);
-                    addTransaction({
+                    handleUpdateBalance(walletState.availableL2 + amount, walletState.frozen, walletState.onChain);
+                    handleAddTransaction({
                       id: Date.now().toString(),
                       type: 'deposit',
                       counterparty: 'Self',
@@ -215,8 +171,8 @@ export default function App() {
                   availableBalance={walletState.availableL2}
                   onBack={() => setCurrentScreen('dashboard')}
                   onSend={(recipient, amount, fee, memo) => {
-                    updateBalance(walletState.availableL2 - amount - fee, walletState.frozen, walletState.onChain);
-                    addTransaction({
+                    handleUpdateBalance(walletState.availableL2 - amount - fee, walletState.frozen, walletState.onChain);
+                    handleAddTransaction({
                       id: Date.now().toString(),
                       type: 'intent',
                       counterparty: recipient,
@@ -238,7 +194,7 @@ export default function App() {
                   onBack={() => setCurrentScreen('dashboard')}
                   onSettle={(destination, priority, fee) => {
                     const amount = walletState.availableL2 - fee;
-                    startSettlement({
+                    handleStartSettlement({
                       amount,
                       fee,
                       priority,
@@ -246,7 +202,7 @@ export default function App() {
                       status: 'frozen',
                       destination,
                     });
-                    addTransaction({
+                    handleAddTransaction({
                       id: Date.now().toString(),
                       type: 'settlement',
                       counterparty: 'Self',
@@ -273,14 +229,9 @@ export default function App() {
               <SettlementStatus
                 settlementData={walletState.settlementData}
                 onMinimize={() => {}}
-                onComplete={completeSettlement}
+                onComplete={handleCompleteSettlement}
                 onUpdateStatus={(status) => {
-                  if (walletState.settlementData) {
-                    setWalletState({
-                      ...walletState,
-                      settlementData: { ...walletState.settlementData, status },
-                    });
-                  }
+                  dispatch(updateSettlementStatus(status));
                 }}
               />
             )}

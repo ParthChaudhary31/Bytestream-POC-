@@ -111,36 +111,59 @@ export class WalletService {
       const pk1 = toXOnly(cleanPubkey1);
       const pk2 = toXOnly(cleanPubkey2);
 
-      // Construct script: <144> OP_CHECKSEQUENCEVERIFY OP_DROP <pk1> OP_CHECKSIG <pk2> OP_CHECKSIGADD OP_2 OP_EQUAL
-      const script = bitcoin.script.compile([
-        bitcoin.script.number.encode(144), // 144 blocks
-        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
-        bitcoin.opcodes.OP_DROP,
+      // Leaf 1: Immediate 2-of-2 MultiSig
+      // <pk1> CHECKSIG <pk2> CHECKSIGADD 2 EQUAL
+      const scriptImmediate = Buffer.from(bitcoin.script.compile([
         pk1,
         bitcoin.opcodes.OP_CHECKSIG,
         pk2,
         bitcoin.opcodes.OP_CHECKSIGADD,
         bitcoin.opcodes.OP_2,
         bitcoin.opcodes.OP_EQUAL,
-      ]);
+      ]));
 
-      // Create Taproot address
-      const tapLeaf = {
-        output: script,
-      };
+      // Leaf 2: User Key + 144 CSV
+      // <144> CSV DROP <pk1> CHECKSIG
+      const scriptUser = Buffer.from(bitcoin.script.compile([
+        bitcoin.script.number.encode(144),
+        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+        bitcoin.opcodes.OP_DROP,
+        pk1,
+        bitcoin.opcodes.OP_CHECKSIG,
+      ]));
+
+      // Leaf 3: Hub Key + 144 CSV
+      // <144> CSV DROP <pk2> CHECKSIG
+      const scriptHub = Buffer.from(bitcoin.script.compile([
+        bitcoin.script.number.encode(144),
+        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+        bitcoin.opcodes.OP_DROP,
+        pk2,
+        bitcoin.opcodes.OP_CHECKSIG,
+      ]));
+
+      // Construct Taproot Tree
+      // Structure: [Leaf1, [Leaf2, Leaf3]]
+      const scriptTree = [
+        { output: scriptImmediate },
+        [
+          { output: scriptUser },
+          { output: scriptHub },
+        ],
+      ];
 
       const { address } = (bitcoin.payments.p2tr as any)({
         internalPubkey: Buffer.from(
           '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
           'hex'
         ), // Standard NUMS key
-        scriptTree: tapLeaf,
+        scriptTree,
         network,
       });
 
       return {
         address: address || '',
-        scriptHex: Buffer.from(script).toString('hex'),
+        scriptHex: Buffer.from(scriptImmediate).toString('hex'), // Returning immediate script hex as primary, though technically there are 3
       };
     } catch (error) {
       throw new Error(`Failed to create taproot multisig: ${error}`);
@@ -155,58 +178,176 @@ export class WalletService {
     hubAddress: string,
     userPrivateKey: string,
     hubPrivateKey: string,
-    multisigAddress: string,
-    nonce?: number
+    nonce?: number,
+    taprootAddress?: string,
+    broadcastPayload?: string,
+    multisigAddress?: string
   ): Promise<string> {
     try {
+      // If broadcastPayload is provided, use it directly
+      if (broadcastPayload) {
+        const broadcastRes = await axios.post(
+          'https://mempool.space/testnet/api/tx',
+          broadcastPayload
+        );
+        return broadcastRes.data; // txid
+      }
+
       const network = bitcoin.networks.testnet;
 
       console.log('Starting createAndBroadcastTransaction...');
       // 1. Derive keys and reconstruct multisig script
       console.log('Deriving keys...');
-      const userKey = ECPair.fromWIF(userPrivateKey, network);
-      const hubKey = ECPair.fromWIF(hubPrivateKey, network);
+
+      let userKey: any;
+      let hubKey: any;
+      let pk1: Buffer | undefined;
+      let pk2: Buffer | undefined;
 
       // Helper to convert pubkey to x-only pubkey (32 bytes)
       const toXOnly = (pubKey: Buffer) => {
         return pubKey.length === 32 ? pubKey : pubKey.subarray(1, 33);
       };
 
-      const pk1 = toXOnly(Buffer.from(userKey.publicKey));
-      const pk2 = toXOnly(Buffer.from(hubKey.publicKey));
+      // Attempt to derive keys if provided
+      if (userPrivateKey) {
+        try {
+          userKey = ECPair.fromWIF(userPrivateKey, network);
+          pk1 = toXOnly(Buffer.from(userKey.publicKey));
+        } catch (e) {
+          console.log('Invalid or missing userPrivateKey');
+        }
+      }
 
-      // Construct script: <144> OP_CHECKSEQUENCEVERIFY OP_DROP <pk1> OP_CHECKSIG <pk2> OP_CHECKSIGADD OP_2 OP_EQUAL
-      const script = bitcoin.script.compile([
-        bitcoin.script.number.encode(144), // 144 blocks
-        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
-        bitcoin.opcodes.OP_DROP,
+      if (hubPrivateKey) {
+        try {
+          hubKey = ECPair.fromWIF(hubPrivateKey, network);
+          pk2 = toXOnly(Buffer.from(hubKey.publicKey));
+        } catch (e) {
+          console.log('Invalid or missing hubPrivateKey');
+        }
+      }
+
+      // We need at least the public keys to reconstruct the tree. 
+      // If private keys are missing, we might need to look up public keys from addresses if not derived from private keys.
+      // However, for this function, we assume we can derive them or they are available.
+      // If we can't get pk1 or pk2, we can't reconstruct the tree to verify/spend.
+
+      if (!pk1) {
+        const pubkey1 = addressToPublicKeyMap.get(userAddress);
+        if (pubkey1) pk1 = toXOnly(Buffer.from(pubkey1.startsWith('0x') ? pubkey1.slice(2) : pubkey1, 'hex'));
+      }
+      if (!pk2) {
+        const pubkey2 = addressToPublicKeyMap.get(hubAddress);
+        if (pubkey2) pk2 = toXOnly(Buffer.from(pubkey2.startsWith('0x') ? pubkey2.slice(2) : pubkey2, 'hex'));
+      }
+
+      if (!pk1 || !pk2) {
+        throw new Error('Could not derive public keys for User and Hub to reconstruct script tree');
+      }
+
+      // Reconstruct the 3 leaves
+      // Leaf 1: Immediate 2-of-2 MultiSig
+      const scriptImmediate = Buffer.from(bitcoin.script.compile([
         pk1,
         bitcoin.opcodes.OP_CHECKSIG,
         pk2,
         bitcoin.opcodes.OP_CHECKSIGADD,
         bitcoin.opcodes.OP_2,
         bitcoin.opcodes.OP_EQUAL,
-      ]);
+      ]));
+
+      // Leaf 2: User Key + 144 CSV
+      const scriptUser = Buffer.from(bitcoin.script.compile([
+        bitcoin.script.number.encode(144),
+        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+        bitcoin.opcodes.OP_DROP,
+        pk1,
+        bitcoin.opcodes.OP_CHECKSIG,
+      ]));
+
+      // Leaf 3: Hub Key + 144 CSV
+      const scriptHub = Buffer.from(bitcoin.script.compile([
+        bitcoin.script.number.encode(144),
+        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+        bitcoin.opcodes.OP_DROP,
+        pk2,
+        bitcoin.opcodes.OP_CHECKSIG,
+      ]));
+
+      // Construct Taproot Tree
+      const scriptTree = [
+        { output: scriptImmediate },
+        [
+          { output: scriptUser },
+          { output: scriptHub },
+        ],
+      ];
+
+      // Determine which path to spend
+      let selectedScript: Buffer;
+      let sequence: number;
+      let signers: any[] = [];
+
+      if (userKey && hubKey) {
+        console.log('Both keys provided. Using Immediate 2-of-2 path.');
+        selectedScript = scriptImmediate;
+        sequence = 0; // Immediate
+        signers = [userKey, hubKey];
+      } else if (userKey) {
+        console.log('Only User key provided. Using User + 144 CSV path.');
+        selectedScript = scriptUser;
+        sequence = 144; // Delayed
+        signers = [userKey];
+      } else if (hubKey) {
+        console.log('Only Hub key provided. Using Hub + 144 CSV path.');
+        selectedScript = scriptHub;
+        sequence = 144; // Delayed
+        signers = [hubKey];
+      } else {
+        throw new Error('No valid private keys provided for signing.');
+      }
 
       const tapLeaf = {
-        output: script,
+        output: selectedScript,
       };
 
-      const { output: scriptPubKey } = (bitcoin.payments.p2tr as any)({
+      // Generate address and control block for the SELECTED path
+      const { output: scriptPubKey, witness } = (bitcoin.payments.p2tr as any)({
         internalPubkey: Buffer.from(
           '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
           'hex'
         ),
-        scriptTree: tapLeaf,
+        scriptTree,
+        redeem: tapLeaf, // This generates the specific control block for this leaf
         network,
       });
 
-      // if (!multisigAddress) throw new Error('Failed to derive multisig address');
+      // Extract control block from witness
+      // Witness stack for script path: [stack elements..., script, controlBlock]
+      // bitcoinjs-lib returns witness as array of buffers. The last one is the control block.
+      const controlBlock = witness![witness!.length - 1];
+
+      // Use provided multisigAddress if available, otherwise use taprootAddress, otherwise derive
+      // Note: The address should be the same regardless of which path we spend, as it depends on the root.
+      const finalMultisigAddress = multisigAddress || taprootAddress || (() => {
+        const { address } = (bitcoin.payments.p2tr as any)({
+          internalPubkey: Buffer.from(
+            '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
+            'hex'
+          ),
+          scriptTree,
+          network,
+        });
+        return address;
+      })();
+
+      if (!scriptPubKey) throw new Error('Failed to derive scriptPubKey');
 
       // 2. Fetch UTXOs
-      console.log(`Fetching UTXOs for address: ${multisigAddress}`);
+      console.log(`Fetching UTXOs for address: ${finalMultisigAddress}`);
       const { data: utxos } = await axios.get(
-        `https://mempool.space/testnet/api/address/${multisigAddress}/utxo`
+        `https://mempool.space/testnet/api/address/${finalMultisigAddress}/utxo`
       );
       console.log(`Found ${utxos?.length || 0} UTXOs`);
 
@@ -238,19 +379,12 @@ export class WalletService {
           },
           tapLeafScript: [
             {
-              leafVersion: 192,
-              script: script,
-              controlBlock: (bitcoin.payments.p2tr as any)({
-                internalPubkey: Buffer.from(
-                  '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0',
-                  'hex'
-                ),
-                scriptTree: tapLeaf,
-                network,
-              }).witness![utxo.vout === 0 ? 1 : 1], // Simplified control block retrieval - in real app need proper merkle proof
+              leafVersion: 192, // 0xC0 in decimal
+              script: selectedScript,
+              controlBlock: controlBlock,
             },
           ],
-          sequence: 144, // Must match OP_CHECKSEQUENCEVERIFY
+          sequence: sequence,
         });
 
         totalInput += utxo.value;
@@ -271,21 +405,16 @@ export class WalletService {
       const change = totalInput - sendAmount - fee;
       if (change > 546) { // Dust limit
         psbt.addOutput({
-          address: multisigAddress,
+          address: finalMultisigAddress,
           value: BigInt(change),
         });
       }
 
       // 5. Sign Input
-      // We need to sign all inputs. For simplicity assuming 1 input or signing all added.
-      // Since both keys are needed (2-of-2 due to OP_CHECKSIGADD OP_2 OP_EQUAL)
-
-      // NOTE: The script is <144> CSV DROP <pk1> CHECKSIG <pk2> CHECKSIGADD 2 EQUAL
-      // This means BOTH keys must sign.
-
       console.log('Signing inputs...');
-      psbt.signAllInputs(userKey);
-      psbt.signAllInputs(hubKey);
+      for (const signer of signers) {
+        psbt.signAllInputs(signer);
+      }
 
       console.log('Finalizing inputs...');
       psbt.finalizeAllInputs();
@@ -295,14 +424,28 @@ export class WalletService {
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
 
-      console.log('Broadcasting transaction...');
-      const broadcastRes = await axios.post(
-        'https://mempool.space/testnet/api/tx',
-        txHex
-      );
-      console.log('Broadcast success:', broadcastRes.data);
+      try {
+        const broadcastRes = await axios.post(
+          'https://mempool.space/testnet/api/tx',
+          txHex,
+          {
+            headers: {
+              'Content-Type': 'text/plain',
+            },
+          }
+        );
+        console.log('Broadcast success:', broadcastRes.data);
 
-      return broadcastRes.data; // txid
+        return broadcastRes.data; // txid
+      } catch (broadcastError: any) {
+        console.error('Broadcast error details:', {
+          status: broadcastError.response?.status,
+          statusText: broadcastError.response?.statusText,
+          data: broadcastError.response?.data,
+          txHex: txHex.substring(0, 100) + '...',
+        });
+        throw new Error(`Broadcast failed: ${broadcastError.response?.data || broadcastError.message}`);
+      }
 
     } catch (error: any) {
       console.error('Detailed error:', error);

@@ -1,4 +1,5 @@
-import { WalletState, Screen } from '../App';
+import { Screen } from '../App';
+import { WalletState } from '../store/slices/walletSlice';
 import { Button } from './ui/button';
 import { Download, Send, Zap, Link2 } from 'lucide-react';
 
@@ -13,9 +14,10 @@ export function Dashboard({ walletState, onNavigate, showToast }: DashboardProps
     return sats.toLocaleString();
   };
 
-  const formatTime = (date: Date) => {
+  const formatTime = (date: Date | string) => {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
     const now = new Date();
-    const diff = Math.floor((now.getTime() - date.getTime()) / 1000);
+    const diff = Math.floor((now.getTime() - dateObj.getTime()) / 1000);
     
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;

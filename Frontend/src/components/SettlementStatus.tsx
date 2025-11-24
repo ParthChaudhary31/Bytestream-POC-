@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { SettlementData } from '../App';
+import { SettlementData } from '../store/slices/walletSlice';
 import { Button } from './ui/button';
 import { Check, Loader2, ExternalLink, Minimize2 } from 'lucide-react';
 
