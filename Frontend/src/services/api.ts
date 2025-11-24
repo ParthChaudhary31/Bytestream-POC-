@@ -104,6 +104,40 @@ class ApiService {
       '/health'
     );
   }
+
+  // Register taproot address for monitoring
+  async registerMonitoring(
+    address: string,
+    userAddress?: string,
+    hubAddress?: string
+  ) {
+    return this.request<{ success: boolean; message: string; address: string }>(
+      '/wallet/register-monitoring',
+      {
+        method: 'POST',
+        body: JSON.stringify({ address, userAddress, hubAddress }),
+      }
+    );
+  }
+
+  // Get all registered accounts
+  async getAccounts() {
+    return this.request<{ accounts: any[]; count: number }>(
+      '/wallet/accounts'
+    );
+  }
+
+  // Get balance events
+  async getBalanceEvents(address?: string, limit?: number, offset?: number) {
+    const params = new URLSearchParams();
+    if (address) params.append('address', address);
+    if (limit) params.append('limit', limit.toString());
+    if (offset) params.append('offset', offset.toString());
+    
+    return this.request<{ events: any[]; total: number; limit: number; offset: number }>(
+      `/wallet/balance-events?${params.toString()}`
+    );
+  }
 }
 
 export const apiService = new ApiService();

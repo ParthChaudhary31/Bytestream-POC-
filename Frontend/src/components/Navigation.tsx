@@ -66,6 +66,16 @@ export function Navigation({ walletState, currentScreen, onNavigate }: Navigatio
             </div>
           </div>
 
+          {/* Monitor Link */}
+          <button
+            onClick={() => onNavigate('monitor')}
+            className={`text-sm ${
+              currentScreen === 'monitor' ? 'text-[#FF9F1C]' : 'text-[#888] hover:text-white'
+            } transition-colors`}
+          >
+            Taproot Monitor
+          </button>
+
           {/* Audit Link */}
           <button
             onClick={() => onNavigate('audit')}

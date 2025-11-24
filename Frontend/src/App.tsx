@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Onboarding } from './components/Onboarding';
 import { NetworkSetup } from './components/NetworkSetup';
 import { Dashboard } from './components/Dashboard';
@@ -7,6 +7,7 @@ import { Send } from './components/Send';
 import { Settle } from './components/Settle';
 import { SettlementStatus } from './components/SettlementStatus';
 import { Audit } from './components/Audit';
+import { TaprootMonitor } from './components/TaprootMonitor';
 import { Navigation } from './components/Navigation';
 import { useAppDispatch, useAppSelector } from './store/hooks';
 import {
@@ -20,7 +21,7 @@ import {
   type SettlementData,
 } from './store/slices/walletSlice';
 
-export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit';
+export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit' | 'monitor';
 
 export default function App() {
   const dispatch = useAppDispatch();
@@ -220,6 +221,11 @@ export default function App() {
                 <Audit
                   transactions={walletState.transactions}
                   onBack={() => setCurrentScreen('dashboard')}
+                  showToast={showToast}
+                />
+              )}
+              {currentScreen === 'monitor' && (
+                <TaprootMonitor
                   showToast={showToast}
                 />
               )}

@@ -10,9 +10,13 @@ const envFile = process.env.NODE_ENV === 'production'
   ? '.env.dev'
   : '.env';
 
-dotenvConfig({ path: path.resolve(process.cwd(), envFile) });
+const envPath = path.resolve(process.cwd(), envFile);
+const result = dotenvConfig({ path: envPath });
+
 // Fallback to .env if specific env file doesn't exist
-dotenvConfig();
+if (result.error && envFile !== '.env') {
+  dotenvConfig({ path: path.resolve(process.cwd(), '.env') });
+}
 
 export const config = {
   // Server
