@@ -95,6 +95,16 @@ export function Navigation({ walletState, currentScreen, onNavigate }: Navigatio
           >
             Audit & Recovery
           </button>
+
+          {/* Quantam Wallet Link */}
+          <button
+            onClick={() => onNavigate('quantam')}
+            className={`text-sm ${
+              currentScreen === 'quantam' ? 'text-[#FF9F1C]' : 'text-[#888] hover:text-white'
+            } transition-colors`}
+          >
+            Quantam Wallet
+          </button>
         </div>
       </div>
     </nav>

@@ -31,9 +31,21 @@ interface UnisatWallet {
   removeListener(event: string, handler: (...args: any[]) => void): void;
 }
 
+// Ethereum/MetaMask wallet types
+interface EthereumProvider {
+  request(args: { method: string; params?: any[] }): Promise<any>;
+  isMetaMask?: boolean;
+  chainId?: string;
+  selectedAddress?: string;
+  on(event: string, handler: (...args: any[]) => void): void;
+  removeListener(event: string, handler: (...args: any[]) => void): void;
+  removeAllListeners(event?: string): void;
+}
+
 declare global {
   interface Window {
     unisat?: UnisatWallet;
+    ethereum?: EthereumProvider;
   }
 }
 
