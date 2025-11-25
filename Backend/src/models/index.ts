@@ -1,6 +1,7 @@
 import { Sequelize } from 'sequelize';
 import { TaprootAccount, initTaprootAccount } from './taprootAccount';
 import { BalanceEvent, initBalanceEvent } from './balanceEvent';
+import { PaymentChannel, initPaymentChannel } from './paymentChannel';
 
 let modelsInitialized = false;
 
@@ -11,9 +12,10 @@ export const initializeModels = (sequelize: Sequelize): void => {
   
   initTaprootAccount(sequelize);
   initBalanceEvent(sequelize);
+  initPaymentChannel(sequelize);
   
   modelsInitialized = true;
 };
 
-export { TaprootAccount, BalanceEvent };
+export { TaprootAccount, BalanceEvent, PaymentChannel };
 

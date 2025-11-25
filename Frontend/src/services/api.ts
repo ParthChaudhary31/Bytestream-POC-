@@ -138,6 +138,155 @@ class ApiService {
       `/wallet/balance-events?${params.toString()}`
     );
   }
+
+  // Lightning-style Channel endpoints
+  async openChannel(userAddress: string, hubAddress: string, capacity: number) {
+    return this.request<{
+      channelId: string;
+      taprootAddress: string;
+      userAddress: string;
+      hubAddress: string;
+      userBalance: number;
+      hubBalance: number;
+      capacity: number;
+      status: 'opening' | 'open' | 'closing' | 'closed';
+      commitmentNumber: number;
+    }>(
+      '/wallet/channel/open',
+      {
+        method: 'POST',
+        body: JSON.stringify({ userAddress, hubAddress, capacity }),
+      }
+    );
+  }
+
+  async confirmFunding(
+    channelId: string,
+    fundingTxid: string,
+    userBalance: number,
+    hubBalance: number
+  ) {
+    return this.request<{
+      channelId: string;
+      taprootAddress: string;
+      userAddress: string;
+      hubAddress: string;
+      userBalance: number;
+      hubBalance: number;
+      capacity: number;
+      status: 'opening' | 'open' | 'closing' | 'closed';
+      commitmentNumber: number;
+      fundingTxid?: string;
+    }>(
+      '/wallet/channel/confirm-funding',
+      {
+        method: 'POST',
+        body: JSON.stringify({ channelId, fundingTxid, userBalance, hubBalance }),
+      }
+    );
+  }
+
+  async updateChannel(
+    channelId: string,
+    newUserBalance: number,
+    newHubBalance: number
+  ) {
+    return this.request<{
+      commitmentNumber: number;
+      userBalance: number;
+      hubBalance: number;
+      commitmentHash: string;
+      timestamp: string;
+    }>(
+      '/wallet/channel/update',
+      {
+        method: 'POST',
+        body: JSON.stringify({ channelId, newUserBalance, newHubBalance }),
+      }
+    );
+  }
+
+  async closeChannel(
+    channelId: string,
+    userPrivateKey: string,
+    hubPrivateKey: string
+  ) {
+    return this.request<{
+      closingTxid: string;
+      channelState: {
+        channelId: string;
+        taprootAddress: string;
+        userAddress: string;
+        hubAddress: string;
+        userBalance: number;
+        hubBalance: number;
+        capacity: number;
+        status: 'opening' | 'open' | 'closing' | 'closed';
+        commitmentNumber: number;
+        closingTxid?: string;
+      };
+    }>(
+      '/wallet/channel/close',
+      {
+        method: 'POST',
+        body: JSON.stringify({ channelId, userPrivateKey, hubPrivateKey }),
+      }
+    );
+  }
+
+  async getChannel(channelId: string) {
+    return this.request<{
+      channelId: string;
+      taprootAddress: string;
+      userAddress: string;
+      hubAddress: string;
+      userBalance: number;
+      hubBalance: number;
+      capacity: number;
+      status: 'opening' | 'open' | 'closing' | 'closed';
+      commitmentNumber: number;
+      fundingTxid?: string;
+      closingTxid?: string;
+    }>(`/wallet/channel/${channelId}`);
+  }
+
+  async getUserChannels(userAddress: string) {
+    return this.request<{
+      channels: Array<{
+        channelId: string;
+        taprootAddress: string;
+        userAddress: string;
+        hubAddress: string;
+        userBalance: number;
+        hubBalance: number;
+        capacity: number;
+        status: 'opening' | 'open' | 'closing' | 'closed';
+        commitmentNumber: number;
+        fundingTxid?: string;
+        closingTxid?: string;
+      }>;
+      count: number;
+    }>(`/wallet/channels/user/${userAddress}`);
+  }
+
+  async getOpenChannels() {
+    return this.request<{
+      channels: Array<{
+        channelId: string;
+        taprootAddress: string;
+        userAddress: string;
+        hubAddress: string;
+        userBalance: number;
+        hubBalance: number;
+        capacity: number;
+        status: 'opening' | 'open' | 'closing' | 'closed';
+        commitmentNumber: number;
+        fundingTxid?: string;
+        closingTxid?: string;
+      }>;
+      count: number;
+    }>('/wallet/channels/open');
+  }
 }
 
 export const apiService = new ApiService();

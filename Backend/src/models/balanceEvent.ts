@@ -36,55 +36,55 @@ export class BalanceEvent extends Model<IBalanceEvent, BalanceEventCreationAttri
 
 export const initBalanceEvent = (sequelize: Sequelize): typeof BalanceEvent => {
   BalanceEvent.init(
-    {
+  {
       id: {
         type: DataTypes.INTEGER.UNSIGNED,
         autoIncrement: true,
         primaryKey: true,
       },
-      address: {
+    address: {
         type: DataTypes.STRING,
         allowNull: false,
-      },
-      userAddress: {
-        type: DataTypes.STRING,
-        allowNull: true,
-      },
-      hubAddress: {
+    },
+    userAddress: {
         type: DataTypes.STRING,
         allowNull: true,
-      },
-      previousBalance: {
+    },
+    hubAddress: {
+        type: DataTypes.STRING,
+        allowNull: true,
+    },
+    previousBalance: {
         type: DataTypes.BIGINT,
         allowNull: false,
-      },
-      currentBalance: {
+    },
+    currentBalance: {
         type: DataTypes.BIGINT,
         allowNull: false,
-      },
-      change: {
+    },
+    change: {
         type: DataTypes.BIGINT,
         allowNull: false,
-      },
-      confirmed: {
+    },
+    confirmed: {
         type: DataTypes.BIGINT,
         allowNull: false,
-      },
-      unconfirmed: {
+    },
+    unconfirmed: {
         type: DataTypes.BIGINT,
         allowNull: false,
-      },
-      utxoCount: {
+    },
+    utxoCount: {
         type: DataTypes.INTEGER,
         allowNull: false,
-      },
-      timestamp: {
+    },
+    timestamp: {
         type: DataTypes.DATE,
         allowNull: false,
         defaultValue: DataTypes.NOW,
-      },
     },
-    {
+  },
+  {
       sequelize,
       tableName: 'balance_events',
       timestamps: true,

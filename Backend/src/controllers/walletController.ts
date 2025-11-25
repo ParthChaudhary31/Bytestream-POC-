@@ -3,6 +3,7 @@ import { WalletService } from '../services/walletService';
 import { AppError } from '../middleware/errorHandler';
 import { TaprootMonitorService } from '../services/taprootMonitorService';
 import { BalanceService } from '../services/balanceService';
+import { ChannelService } from '../services/channelService';
 import { BalanceEvent, TaprootAccount } from '../models';
 
 export class WalletController {
@@ -370,6 +371,208 @@ export class WalletController {
       const appError: AppError = error instanceof Error
         ? error
         : new Error('Failed to fetch accounts');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Open a new payment channel (Lightning style)
+   * POST /api/v1/wallet/channel/open
+   */
+  static async openChannel(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { userAddress, hubAddress, capacity } = req.body;
+
+      if (!userAddress || !hubAddress || !capacity) {
+        const appError: AppError = new Error('userAddress, hubAddress, and capacity are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const channel = await ChannelService.openChannel(userAddress, hubAddress, capacity);
+      res.json(channel);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to open channel');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Confirm channel funding (after L1 transaction)
+   * POST /api/v1/wallet/channel/confirm-funding
+   */
+  static async confirmFunding(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId, fundingTxid, userBalance, hubBalance } = req.body;
+
+      if (!channelId || !fundingTxid || userBalance === undefined || hubBalance === undefined) {
+        const appError: AppError = new Error('channelId, fundingTxid, userBalance, and hubBalance are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const channel = await ChannelService.confirmFunding(channelId, fundingTxid, userBalance, hubBalance);
+      res.json(channel);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to confirm funding');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Update channel state (off-chain payment)
+   * POST /api/v1/wallet/channel/update
+   */
+  static async updateChannel(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId, newUserBalance, newHubBalance } = req.body;
+
+      if (!channelId || newUserBalance === undefined || newHubBalance === undefined) {
+        const appError: AppError = new Error('channelId, newUserBalance, and newHubBalance are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const commitment = await ChannelService.updateChannelState(channelId, newUserBalance, newHubBalance);
+      res.json(commitment);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to update channel');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Close channel (settlement to L1)
+   * POST /api/v1/wallet/channel/close
+   */
+  static async closeChannel(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId, userPrivateKey, hubPrivateKey } = req.body;
+
+      if (!channelId || !userPrivateKey || !hubPrivateKey) {
+        const appError: AppError = new Error('channelId, userPrivateKey, and hubPrivateKey are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.closeChannel(channelId, userPrivateKey, hubPrivateKey);
+      res.json(result);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to close channel');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Get channel by ID
+   * GET /api/v1/wallet/channel/:channelId
+   */
+  static async getChannel(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId } = req.params;
+
+      if (!channelId) {
+        const appError: AppError = new Error('channelId is required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const channel = await ChannelService.getChannel(channelId);
+      
+      if (!channel) {
+        const appError: AppError = new Error('Channel not found');
+        appError.statusCode = 404;
+        return next(appError);
+      }
+
+      res.json(channel);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to get channel');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Get all channels for a user
+   * GET /api/v1/wallet/channels/user/:userAddress
+   */
+  static async getUserChannels(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { userAddress } = req.params;
+
+      if (!userAddress) {
+        const appError: AppError = new Error('userAddress is required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const channels = await ChannelService.getUserChannels(userAddress);
+      res.json({ channels, count: channels.length });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to get user channels');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Get all open channels
+   * GET /api/v1/wallet/channels/open
+   */
+  static async getOpenChannels(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const channels = await ChannelService.getOpenChannels();
+      res.json({ channels, count: channels.length });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to get open channels');
       appError.statusCode = 500;
       next(appError);
     }

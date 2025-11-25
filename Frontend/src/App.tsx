@@ -8,6 +8,7 @@ import { Settle } from './components/Settle';
 import { SettlementStatus } from './components/SettlementStatus';
 import { Audit } from './components/Audit';
 import { TaprootMonitor } from './components/TaprootMonitor';
+import { LightningChannel } from './components/LightningChannel';
 import { Navigation } from './components/Navigation';
 import { useAppDispatch, useAppSelector } from './store/hooks';
 import {
@@ -21,7 +22,7 @@ import {
   type SettlementData,
 } from './store/slices/walletSlice';
 
-export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit' | 'monitor';
+export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit' | 'monitor' | 'lightning';
 
 export default function App() {
   const dispatch = useAppDispatch();
@@ -131,7 +132,7 @@ export default function App() {
       {/* Content */}
       <div className="relative z-10">
         {currentScreen === 'onboarding' ? (
-          <NetworkSetup />
+          <NetworkSetup onNavigate={setCurrentScreen} />
         ) : (
           <>
             <Navigation
@@ -228,6 +229,9 @@ export default function App() {
                 <TaprootMonitor
                   showToast={showToast}
                 />
+              )}
+              {currentScreen === 'lightning' && (
+                <LightningChannel />
               )}
             </main>
 

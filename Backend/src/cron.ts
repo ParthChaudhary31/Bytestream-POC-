@@ -142,10 +142,10 @@ async function loadAccountsFromDatabase() {
       const batch = newAccounts.slice(i, i + batchSize);
       const promises = batch.map(account =>
         TaprootMonitorService.registerTaprootAccount(
-          account.address,
+        account.address,
           account.userAddress || undefined,
           account.hubAddress || undefined,
-          true // skipDbSave = true
+        true // skipDbSave = true
         ).catch((error: any) => {
           console.error(`❌ Failed to register account ${account.address}:`, error.message);
         })

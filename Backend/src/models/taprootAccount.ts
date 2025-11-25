@@ -28,41 +28,41 @@ export class TaprootAccount extends Model<ITaprootAccount, TaprootAccountCreatio
 
 export const initTaprootAccount = (sequelize: Sequelize): typeof TaprootAccount => {
   TaprootAccount.init(
-    {
+  {
       id: {
         type: DataTypes.INTEGER.UNSIGNED,
         autoIncrement: true,
         primaryKey: true,
       },
-      address: {
+    address: {
         type: DataTypes.STRING,
         allowNull: false,
-        unique: true,
-      },
-      userAddress: {
+      unique: true,
+    },
+    userAddress: {
         type: DataTypes.STRING,
         allowNull: true,
-      },
-      hubAddress: {
+    },
+    hubAddress: {
         type: DataTypes.STRING,
         allowNull: true,
-      },
-      lastBalanceCheck: {
+    },
+    lastBalanceCheck: {
         type: DataTypes.DATE,
         allowNull: true,
-      },
-      lastKnownBalance: {
+    },
+    lastKnownBalance: {
         type: DataTypes.BIGINT,
         allowNull: true,
         defaultValue: 0,
-      },
-      isActive: {
+    },
+    isActive: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: true,
-      },
     },
-    {
+  },
+  {
       sequelize,
       tableName: 'taproot_accounts',
       timestamps: true,

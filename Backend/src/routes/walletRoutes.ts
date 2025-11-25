@@ -17,5 +17,14 @@ router.post('/trigger-balance-check', WalletController.triggerBalanceCheck);
 router.get('/balance-events', WalletController.getBalanceEvents);
 router.get('/accounts', WalletController.getAccounts);
 
+// Lightning-style channel endpoints
+router.post('/channel/open', WalletController.openChannel);
+router.post('/channel/confirm-funding', WalletController.confirmFunding);
+router.post('/channel/update', WalletController.updateChannel);
+router.post('/channel/close', WalletController.closeChannel);
+router.get('/channel/:channelId', WalletController.getChannel);
+router.get('/channels/user/:userAddress', WalletController.getUserChannels);
+router.get('/channels/open', WalletController.getOpenChannels);
+
 export default router;
 

@@ -66,6 +66,16 @@ export function Navigation({ walletState, currentScreen, onNavigate }: Navigatio
             </div>
           </div>
 
+          {/* Lightning Channel Link */}
+          <button
+            onClick={() => onNavigate('lightning')}
+            className={`text-sm ${
+              currentScreen === 'lightning' ? 'text-[#FF9F1C]' : 'text-[#888] hover:text-white'
+            } transition-colors`}
+          >
+            ⚡ Lightning Channels
+          </button>
+
           {/* Monitor Link */}
           <button
             onClick={() => onNavigate('monitor')}

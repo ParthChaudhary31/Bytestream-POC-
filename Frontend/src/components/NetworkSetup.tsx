@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { NodeInitialization } from './NodeInitialization';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Copy, CheckCircle2, Trash2, ArrowRight, ArrowDown } from 'lucide-react';
+import { Copy, CheckCircle2, Trash2, ArrowRight, ArrowDown, Wallet, Zap } from 'lucide-react';
 import { apiService } from '../services/api';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
@@ -17,8 +17,13 @@ import {
   type UserKeys,
   type TaprootMultisig,
 } from '../store/slices/networkSlice';
+import { Screen } from '../App';
 
-export function NetworkSetup() {
+interface NetworkSetupProps {
+  onNavigate?: (screen: Screen) => void;
+}
+
+export function NetworkSetup({ onNavigate }: NetworkSetupProps) {
   const dispatch = useAppDispatch();
   const networkState = useAppSelector((state) => state.network);
   const { user1Keys, hubKeys, user2Keys, user1HubTaproot, user2HubTaproot, user1TransactionTxid, user2TransactionTxid } = networkState;
@@ -28,6 +33,8 @@ export function NetworkSetup() {
   const [loadingUser1Transaction, setLoadingUser1Transaction] = useState(false);
   const [loadingUser2Transaction, setLoadingUser2Transaction] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [unisatAccount, setUnisatAccount] = useState<string | null>(null);
+  const [connectingUnisat, setConnectingUnisat] = useState(false);
   const [manualTaprootUser1, setManualTaprootUser1] = useState('');
   const [manualTaprootUser2, setManualTaprootUser2] = useState('');
   const [broadcastPayloadUser1, setBroadcastPayloadUser1] = useState('');
@@ -211,6 +218,57 @@ export function NetworkSetup() {
     }
   };
 
+  const handleConnectUnisat = async () => {
+    // If already connected, disconnect
+    if (unisatAccount) {
+      setUnisatAccount(null);
+      return;
+    }
+
+    if (!window.unisat) {
+      // Redirect to Unisat installation page
+      window.open('https://unisat.io/download', '_blank');
+      return;
+    }
+
+    setConnectingUnisat(true);
+    try {
+      // Request access to legacy accounts
+      const accounts = await window.unisat.requestAccounts();
+      if (accounts && accounts.length > 0) {
+        // Get the first legacy account (P2PKH address)
+        const legacyAccount = accounts[0];
+        setUnisatAccount(legacyAccount);
+        
+        // Set the user address in User 1 section
+        setEditableUser1Address(legacyAccount);
+        setManualUser1Address(legacyAccount);
+        
+        // Automatically create taproot if hub address is available
+        const hubAddr = editableHubAddressUser1 || hubKeys?.address;
+        if (hubAddr) {
+          try {
+            const result = await apiService.createTaprootMultisig(legacyAccount, hubAddr);
+            dispatch(setUser1HubTaproot(result));
+            alert(`Unisat wallet connected! Account: ${legacyAccount}\nTaproot address created automatically.`);
+          } catch (taprootError) {
+            console.error('Failed to create taproot automatically:', taprootError);
+            alert(`Unisat wallet connected! Account: ${legacyAccount}\nNote: Could not create taproot automatically. Please create it manually.`);
+          }
+        } else {
+          alert(`Unisat wallet connected! Account: ${legacyAccount}\nNote: Hub address not available. Please set Hub address and create taproot manually.`);
+        }
+      } else {
+        alert('No accounts found in Unisat wallet.');
+      }
+    } catch (error) {
+      console.error('Failed to connect Unisat wallet:', error);
+      alert(`Failed to connect Unisat wallet: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setConnectingUnisat(false);
+    }
+  };
+
   const handleCreateUser1Transaction = async () => {
     setLoadingUser1Transaction(true);
     try {
@@ -288,7 +346,17 @@ export function NetworkSetup() {
   return (
     <div className="min-h-screen w-full flex flex-col px-6 py-8 relative">
       {/* Top Right Buttons */}
-      <div className="absolute top-6 right-6 flex gap-2">
+      <div className="absolute top-6 right-6 flex gap-2 items-center">
+        {onNavigate && (
+          <Button
+            onClick={() => onNavigate('lightning')}
+            className="bg-[#FF9F1C] hover:bg-[#FF9F1C]/90 text-black"
+            size="sm"
+          >
+            <Zap className="h-4 w-4 mr-2" />
+            ⚡ Lightning Channels
+          </Button>
+        )}
         <Button
           onClick={async () => {
             // Check for multisig address from taproot
@@ -310,6 +378,15 @@ export function NetworkSetup() {
           Faucet
         </Button>
         <Button
+          onClick={handleConnectUnisat}
+          disabled={connectingUnisat}
+          className={unisatAccount ? "bg-[#EF4444] hover:bg-[#EF4444]/90 text-white" : "bg-[#3B82F6] hover:bg-[#3B82F6]/90 text-white"}
+          size="sm"
+        >
+          <Wallet className="h-4 w-4 mr-2" />
+          {connectingUnisat ? 'Connecting...' : unisatAccount ? 'Disconnect Unisat' : 'Connect Unisat'}
+        </Button>
+        <Button
           onClick={handleClearRedux}
           variant="destructive"
           className="bg-[#EF4444] hover:bg-[#EF4444]/90 text-white"
@@ -318,6 +395,29 @@ export function NetworkSetup() {
           <Trash2 className="h-4 w-4 mr-2" />
           Clear All Data
         </Button>
+        {/* Display Connected Unisat Account */}
+        {unisatAccount && (
+          <div className="ml-2 px-3 py-1.5 bg-[#3B82F6]/20 border border-[#3B82F6] rounded text-xs text-[#3B82F6] flex items-center gap-2">
+            <Wallet className="h-3 w-3" />
+            <span className="font-mono">{unisatAccount.slice(0, 8)}...{unisatAccount.slice(-6)}</span>
+            <Button
+              onClick={() => {
+                navigator.clipboard.writeText(unisatAccount);
+                setCopied('unisat-account');
+                setTimeout(() => setCopied(null), 2000);
+              }}
+              size="sm"
+              variant="ghost"
+              className="h-4 w-4 p-0 hover:bg-[#3B82F6]/30"
+            >
+              {copied === 'unisat-account' ? (
+                <CheckCircle2 className="h-3 w-3 text-[#10B981]" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+            </Button>
+          </div>
+        )}
       </div>
       
       <div className="mb-8 text-center">

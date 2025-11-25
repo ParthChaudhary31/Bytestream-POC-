@@ -53,10 +53,10 @@ export class TaprootMonitorService {
     if (!skipDbSave) {
       try {
         await TaprootAccountModel.upsert({
-          address,
+            address,
           userAddress: userAddress || null,
           hubAddress: hubAddress || null,
-          isActive: true,
+            isActive: true,
         });
         console.log(`💾 Saved taproot account to database: ${address}`);
       } catch (error: any) {
@@ -268,10 +268,10 @@ export class TaprootMonitorService {
       async (address, index) => {
         try {
           console.log(`\n[${index + 1}/${totalAccounts}] Processing account: ${address.substring(0, 20)}...`);
-          await this.checkBalance(address);
+        await this.checkBalance(address);
           console.log(`✅ Account ${index + 1}/${totalAccounts} checked successfully`);
-        } catch (error: any) {
-          console.error(`❌ Failed to check balance for ${address}:`, error.message);
+      } catch (error: any) {
+        console.error(`❌ Failed to check balance for ${address}:`, error.message);
           throw error; // Re-throw to be caught by processBatch
         }
       }
