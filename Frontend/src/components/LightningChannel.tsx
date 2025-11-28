@@ -11,8 +11,9 @@ interface ChannelState {
   taprootAddress: string;
   userAddress: string;
   hubAddress: string;
-  userBalance: number;
-  hubBalance: number;
+  userBalance: number; // Committed balance (what user will get on exit)
+  hubBalance: number; // Committed hub balance (positive = user owes hub, negative = hub owes user)
+  l1Balance?: number; // Actual L1 balance in taproot address (on-chain)
   capacity: number;
   status: 'opening' | 'open' | 'closing' | 'closed';
   commitmentNumber: number;
@@ -81,10 +82,23 @@ export function LightningChannel() {
 
     setOpeningChannel(true);
     try {
+      // Register public key if available
+      if (user1Keys.publicKey) {
+        try {
+          await apiService.registerPublicKey(user1Keys.address, user1Keys.publicKey);
+        } catch (err) {
+          console.warn('Failed to register public key:', err);
+        }
+      }
+
+      // Get hub public key if available
+      const hubPublicKey = hubKeys?.publicKey;
+
       const channel = await apiService.openChannel(
         user1Keys.address,
-        hubKeys.address,
-        capacity
+        capacity,
+        user1Keys.publicKey,
+        hubPublicKey
       );
       
       alert(`Channel opened! Channel ID: ${channel.channelId}\nTaproot Address: ${channel.taprootAddress}\n\nNow fund this address on L1 to activate the channel.`);
@@ -305,12 +319,26 @@ export function LightningChannel() {
                   </div>
                   <div className="grid grid-cols-2 gap-4 mt-4">
                     <div>
-                      <p className="text-[#888] text-xs mb-1">Your Balance</p>
-                      <p className="text-white font-mono">{formatSats(channel.userBalance)} sats</p>
+                      <p className="text-[#888] text-xs mb-1">Your Balance (L1)</p>
+                      <p className="text-white font-mono">
+                        {channel.l1Balance !== undefined 
+                          ? `${formatSats(channel.l1Balance)} sats`
+                          : 'Loading...'}
+                      </p>
+                      {channel.l1Balance !== undefined && channel.hubBalance !== 0 && (
+                        <p className="text-[#888] text-xs mt-1">
+                          Withdrawable: {formatSats(Math.max(0, channel.l1Balance - channel.hubBalance))} sats
+                        </p>
+                      )}
                     </div>
                     <div>
-                      <p className="text-[#888] text-xs mb-1">Hub Balance</p>
+                      <p className="text-[#888] text-xs mb-1">
+                        Hub Balance 
+                        {channel.hubBalance > 0 && <span className="text-[#F59E0B] ml-1">(You owe Hub)</span>}
+                        {channel.hubBalance < 0 && <span className="text-[#10B981] ml-1">(Hub owes you)</span>}
+                      </p>
                       <p className="text-white font-mono">{formatSats(channel.hubBalance)} sats</p>
+                      <p className="text-[#888] text-xs mt-1">Committed Balance: {formatSats(channel.userBalance)} sats</p>
                     </div>
                     <div>
                       <p className="text-[#888] text-xs mb-1">Capacity</p>

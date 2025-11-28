@@ -79,21 +79,47 @@ export class WalletService {
   }
 
   /**
+   * Register public key for an address
+   * This allows storing public keys for addresses generated elsewhere
+   */
+  static registerPublicKey(address: string, publicKey: string): void {
+    if (address && publicKey) {
+      addressToPublicKeyMap.set(address, publicKey);
+    }
+  }
+
+  /**
    * Create a Taproot multisig address
    * Accepts either addresses or public keys
+   * If public keys are provided, they will be used directly
    */
-  static createTaprootMultisig(address1: string, address2: string): TaprootMultisig {
+  static createTaprootMultisig(
+    address1: string, 
+    address2: string, 
+    publicKey1?: string, 
+    publicKey2?: string
+  ): TaprootMultisig {
     try {
       if (!address1 || !address2) {
         throw new Error('Both address1 and address2 are required');
       }
 
-      // Look up public keys from addresses
-      const pubkey1 = addressToPublicKeyMap.get(address1);
-      const pubkey2 = addressToPublicKeyMap.get(address2);
+      // Use provided public keys, or look up from map
+      let pubkey1 = publicKey1 || addressToPublicKeyMap.get(address1);
+      let pubkey2 = publicKey2 || addressToPublicKeyMap.get(address2);
 
+      // If still not found, try to derive from private key (if we have it)
+      // This is a fallback - ideally public keys should be provided or registered
       if (!pubkey1 || !pubkey2) {
-        throw new Error(`Public key not found for one or both addresses. Address1: ${address1}, Address2: ${address2}`);
+        // Try to derive from address using a different approach
+        // For now, we'll throw a more helpful error
+        const missing = [];
+        if (!pubkey1) missing.push(`Address1: ${address1}`);
+        if (!pubkey2) missing.push(`Address2: ${address2}`);
+        throw new Error(
+          `Public key not found for: ${missing.join(', ')}. ` +
+          `Please ensure wallets are generated through the backend API, or provide public keys directly.`
+        );
       }
 
       const network = bitcoin.networks.testnet;

@@ -9,6 +9,7 @@ import { SettlementStatus } from './components/SettlementStatus';
 import { Audit } from './components/Audit';
 import { TaprootMonitor } from './components/TaprootMonitor';
 import { LightningChannel } from './components/LightningChannel';
+import { ByteStream } from './components/ByteStream';
 import { Navigation } from './components/Navigation';
 import { useAppDispatch, useAppSelector } from './store/hooks';
 import {
@@ -22,7 +23,7 @@ import {
   type SettlementData,
 } from './store/slices/walletSlice';
 
-export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit' | 'monitor' | 'lightning';
+export type Screen = 'onboarding' | 'dashboard' | 'deposit' | 'send' | 'settle' | 'audit' | 'monitor' | 'lightning' | 'bytestream';
 
 export default function App() {
   const dispatch = useAppDispatch();
@@ -232,6 +233,9 @@ export default function App() {
               )}
               {currentScreen === 'lightning' && (
                 <LightningChannel />
+              )}
+              {currentScreen === 'bytestream' && (
+                <ByteStream />
               )}
             </main>
 

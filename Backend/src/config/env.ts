@@ -29,5 +29,18 @@ export const config = {
 
   // API
   apiVersion: process.env.API_VERSION || 'v1',
+
+  // ByteStream Hub Configuration
+  hubAddress: process.env.HUB_ADDRESS || '',
+  hubPrivateKey: process.env.HUB_PRIVATE_KEY || '',
 };
+
+// Validate Hub configuration at startup
+if (!config.hubAddress) {
+  console.warn('⚠️  HUB_ADDRESS not set in environment variables. Hub operations may fail.');
+}
+
+if (!config.hubPrivateKey) {
+  console.warn('⚠️  HUB_PRIVATE_KEY not set in environment variables. Hub operations may fail.');
+}
 

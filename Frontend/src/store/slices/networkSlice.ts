@@ -14,10 +14,17 @@ export interface TaprootMultisig {
   scriptHex: string;
 }
 
+interface UserWallet extends UserKeys {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 interface NetworkState {
   user1Keys: UserKeys | null;
   hubKeys: UserKeys | null;
   user2Keys: UserKeys | null;
+  userWallets: UserWallet[]; // List of all generated user wallets
   user1HubTaproot: TaprootMultisig | null;
   user2HubTaproot: TaprootMultisig | null;
   user1TransactionTxid: string | null;
@@ -28,6 +35,7 @@ const initialState: NetworkState = {
   user1Keys: null,
   hubKeys: null,
   user2Keys: null,
+  userWallets: [],
   user1HubTaproot: null,
   user2HubTaproot: null,
   user1TransactionTxid: null,
@@ -59,6 +67,25 @@ const networkSlice = createSlice({
     setUser2TransactionTxid: (state, action: PayloadAction<string>) => {
       state.user2TransactionTxid = action.payload;
     },
+    addUserWallet: (state, action: PayloadAction<UserWallet>) => {
+      // Check if wallet with same address already exists
+      const exists = state.userWallets.some(w => w.address === action.payload.address);
+      if (!exists) {
+        state.userWallets.push(action.payload);
+      }
+    },
+    removeUserWallet: (state, action: PayloadAction<string>) => {
+      state.userWallets = state.userWallets.filter(w => w.id !== action.payload);
+    },
+    updateUserWallet: (state, action: PayloadAction<{ id: string; updates: Partial<UserWallet> }>) => {
+      const index = state.userWallets.findIndex(w => w.id === action.payload.id);
+      if (index !== -1) {
+        state.userWallets[index] = { ...state.userWallets[index], ...action.payload.updates };
+      }
+    },
+    clearUserWallets: (state) => {
+      state.userWallets = [];
+    },
     resetNetwork: () => initialState,
   },
 });
@@ -71,8 +98,14 @@ export const {
   setUser2HubTaproot,
   setUser1TransactionTxid,
   setUser2TransactionTxid,
+  addUserWallet,
+  removeUserWallet,
+  updateUserWallet,
+  clearUserWallets,
   resetNetwork,
 } = networkSlice.actions;
+
+export type { UserWallet };
 
 export default networkSlice.reducer;
 

@@ -34,6 +34,39 @@ export class WalletController {
   }
 
   /**
+   * Register public key for an address
+   * POST /api/v1/wallet/register-public-key
+   */
+  static async registerPublicKey(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { address, publicKey } = req.body;
+
+      if (!address || !publicKey) {
+        const appError: AppError = new Error('Both address and publicKey are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      WalletService.registerPublicKey(address, publicKey);
+      
+      res.json({
+        success: true,
+        message: `Public key registered for address ${address}`,
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to register public key');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
    * Create a Taproot multisig address
    * POST /api/v1/wallet/create-taproot-multisig
    */
@@ -43,7 +76,7 @@ export class WalletController {
     next: NextFunction
   ) {
     try {
-      const { address1, address2 } = req.body;
+      const { address1, address2, publicKey1, publicKey2 } = req.body;
 
       if (!address1 || !address2) {
         const appError: AppError = new Error('Both address1 and address2 are required');
@@ -51,7 +84,7 @@ export class WalletController {
         return next(appError);
       }
 
-      const result = WalletService.createTaprootMultisig(address1, address2);
+      const result = WalletService.createTaprootMultisig(address1, address2, publicKey1, publicKey2);
       
       // Automatically register taproot address for monitoring
       TaprootMonitorService.registerTaprootAccount(
@@ -379,6 +412,7 @@ export class WalletController {
   /**
    * Open a new payment channel (Lightning style)
    * POST /api/v1/wallet/channel/open
+   * Hub address is now taken from config
    */
   static async openChannel(
     req: Request,
@@ -386,15 +420,26 @@ export class WalletController {
     next: NextFunction
   ) {
     try {
-      const { userAddress, hubAddress, capacity } = req.body;
+      const { userAddress, capacity, userPublicKey, hubPublicKey } = req.body;
 
-      if (!userAddress || !hubAddress || !capacity) {
-        const appError: AppError = new Error('userAddress, hubAddress, and capacity are required');
+      if (!userAddress || !capacity) {
+        const appError: AppError = new Error('userAddress and capacity are required');
         appError.statusCode = 400;
         return next(appError);
       }
 
-      const channel = await ChannelService.openChannel(userAddress, hubAddress, capacity);
+      // Register public keys if provided
+      if (userPublicKey) {
+        WalletService.registerPublicKey(userAddress, userPublicKey);
+      }
+      if (hubPublicKey) {
+        const { config } = await import('../config/env');
+        if (config.hubAddress) {
+          WalletService.registerPublicKey(config.hubAddress, hubPublicKey);
+        }
+      }
+
+      const channel = await ChannelService.openChannel(userAddress, capacity);
       res.json(channel);
     } catch (error) {
       const appError: AppError = error instanceof Error
@@ -573,6 +618,197 @@ export class WalletController {
       const appError: AppError = error instanceof Error
         ? error
         : new Error('Failed to get open channels');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * 1-to-Many Payment Routing
+   * POST /api/v1/wallet/channel/routing-payment
+   */
+  static async routingPayment(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { senderAddress, recipients } = req.body;
+
+      if (!senderAddress || !recipients || !Array.isArray(recipients) || recipients.length === 0) {
+        const appError: AppError = new Error('senderAddress and recipients array are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.routingPayment(senderAddress, recipients);
+      res.json(result);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to route payment');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Get Hub's internal ledger
+   * GET /api/v1/wallet/hub/ledger?sync=true
+   */
+  static async getHubLedger(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const sync = req.query.sync === 'true' || req.query.sync === '1';
+      const ledger = await ChannelService.getHubLedger(sync);
+      res.json({ ledger, count: ledger.length, synced: sync });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to get hub ledger');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Sync Hub Ledger with current channel states
+   * POST /api/v1/wallet/hub/ledger/sync
+   */
+  static async syncHubLedger(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      await ChannelService.syncHubLedger();
+      const ledger = await ChannelService.getHubLedger(false);
+      res.json({ 
+        success: true, 
+        message: 'Hub ledger synced with current channel states',
+        ledger, 
+        count: ledger.length 
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to sync hub ledger');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Clear Hub Ledger
+   * POST /api/v1/wallet/hub/ledger/clear
+   */
+  static async clearHubLedger(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      await ChannelService.clearHubLedger();
+      res.json({ 
+        success: true, 
+        message: 'Hub ledger cleared',
+        ledger: [],
+        count: 0
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to clear hub ledger');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Unilateral Exit (with CSV lock)
+   * POST /api/v1/wallet/channel/unilateral-exit
+   */
+  static async unilateralExit(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId, userPrivateKey } = req.body;
+
+      if (!channelId || !userPrivateKey) {
+        const appError: AppError = new Error('channelId and userPrivateKey are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.unilateralExit(channelId, userPrivateKey);
+      res.json(result);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to initiate unilateral exit');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Watchtower Check
+   * GET /api/v1/wallet/channel/:channelId/watchtower
+   */
+  static async watchtowerCheck(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId } = req.params;
+
+      if (!channelId) {
+        const appError: AppError = new Error('channelId is required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.watchtowerCheck(channelId);
+      res.json(result);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to check watchtower');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Competing Remedy Transaction
+   * POST /api/v1/wallet/channel/competing-remedy
+   */
+  static async competingRemedy(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId, staleCommitmentNumber } = req.body;
+
+      if (!channelId || staleCommitmentNumber === undefined) {
+        const appError: AppError = new Error('channelId and staleCommitmentNumber are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.competingRemedy(channelId, staleCommitmentNumber);
+      res.json(result);
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to create competing remedy');
       appError.statusCode = 500;
       next(appError);
     }

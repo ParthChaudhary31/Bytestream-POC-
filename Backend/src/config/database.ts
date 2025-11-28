@@ -84,6 +84,7 @@ export const initializeModels = async (): Promise<void> => {
   initModels(sequelize);
   
   // Sync models (creates tables if they don't exist)
-  await sequelize.sync({ alter: false });
+  // Use alter: true to add new columns to existing tables
+  await sequelize.sync({ alter: true });
 };
 

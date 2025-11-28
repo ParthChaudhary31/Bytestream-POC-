@@ -76,6 +76,16 @@ export function Navigation({ walletState, currentScreen, onNavigate }: Navigatio
             ⚡ Lightning Channels
           </button>
 
+          {/* ByteStream L2 Link */}
+          <button
+            onClick={() => onNavigate('bytestream')}
+            className={`text-sm ${
+              currentScreen === 'bytestream' ? 'text-[#FF9F1C]' : 'text-[#888] hover:text-white'
+            } transition-colors`}
+          >
+            🚀 ByteStream L2
+          </button>
+
           {/* Monitor Link */}
           <button
             onClick={() => onNavigate('monitor')}

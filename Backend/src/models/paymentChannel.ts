@@ -14,6 +14,7 @@ export interface IPaymentChannel {
   closingTxid?: string | null; // L1 closing transaction ID
   commitmentNumber: number; // Current commitment transaction number
   lastCommitmentHash?: string | null; // Hash of last commitment transaction
+  lastCommitmentTxHex?: string | null; // Last commitment transaction hex (signed but not broadcast)
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -34,6 +35,7 @@ export class PaymentChannel extends Model<IPaymentChannel, PaymentChannelCreatio
   public closingTxid?: string | null;
   public commitmentNumber!: number;
   public lastCommitmentHash?: string | null;
+  public lastCommitmentTxHex?: string | null;
   public createdAt!: Date;
   public updatedAt!: Date;
 }
@@ -98,6 +100,10 @@ export const initPaymentChannel = (sequelize: Sequelize): typeof PaymentChannel 
       },
       lastCommitmentHash: {
         type: DataTypes.STRING,
+        allowNull: true,
+      },
+      lastCommitmentTxHex: {
+        type: DataTypes.TEXT,
         allowNull: true,
       },
     },

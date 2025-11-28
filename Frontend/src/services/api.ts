@@ -58,6 +58,17 @@ class ApiService {
     );
   }
 
+  // Register public key for an address
+  async registerPublicKey(address: string, publicKey: string) {
+    return this.request<{ success: boolean; message: string }>(
+      '/wallet/register-public-key',
+      {
+        method: 'POST',
+        body: JSON.stringify({ address, publicKey }),
+      }
+    );
+  }
+
   // Create Taproot multisig
   async createTaprootMultisig(address1: string, address2: string) {
     return this.request<{ address: string; scriptHex: string }>(
@@ -140,7 +151,7 @@ class ApiService {
   }
 
   // Lightning-style Channel endpoints
-  async openChannel(userAddress: string, hubAddress: string, capacity: number) {
+  async openChannel(userAddress: string, capacity: number, userPublicKey?: string, hubPublicKey?: string) {
     return this.request<{
       channelId: string;
       taprootAddress: string;
@@ -155,7 +166,7 @@ class ApiService {
       '/wallet/channel/open',
       {
         method: 'POST',
-        body: JSON.stringify({ userAddress, hubAddress, capacity }),
+        body: JSON.stringify({ userAddress, capacity, userPublicKey, hubPublicKey }),
       }
     );
   }
@@ -242,6 +253,7 @@ class ApiService {
       hubAddress: string;
       userBalance: number;
       hubBalance: number;
+      l1Balance?: number;
       capacity: number;
       status: 'opening' | 'open' | 'closing' | 'closed';
       commitmentNumber: number;
@@ -259,6 +271,7 @@ class ApiService {
         hubAddress: string;
         userBalance: number;
         hubBalance: number;
+        l1Balance?: number;
         capacity: number;
         status: 'opening' | 'open' | 'closing' | 'closed';
         commitmentNumber: number;
@@ -278,6 +291,7 @@ class ApiService {
         hubAddress: string;
         userBalance: number;
         hubBalance: number;
+        l1Balance?: number;
         capacity: number;
         status: 'opening' | 'open' | 'closing' | 'closed';
         commitmentNumber: number;
@@ -286,6 +300,138 @@ class ApiService {
       }>;
       count: number;
     }>('/wallet/channels/open');
+  }
+
+  // ByteStream L2 routing endpoints
+  async routingPayment(senderAddress: string, recipients: Array<{ userAddress: string; amount: number }>) {
+    return this.request<{
+      success: boolean;
+      senderChannel: {
+        channelId: string;
+        taprootAddress: string;
+        userAddress: string;
+        hubAddress: string;
+        userBalance: number;
+        hubBalance: number;
+        l1Balance?: number;
+        capacity: number;
+        status: 'opening' | 'open' | 'closing' | 'closed';
+        commitmentNumber: number;
+      };
+      recipientChannels: Array<{
+        userAddress: string;
+        channel: {
+          channelId: string;
+          taprootAddress: string;
+          userAddress: string;
+          hubAddress: string;
+          userBalance: number;
+          hubBalance: number;
+          l1Balance?: number;
+          capacity: number;
+          status: 'opening' | 'open' | 'closing' | 'closed';
+          commitmentNumber: number;
+        };
+        commitment: {
+          commitmentNumber: number;
+          userBalance: number;
+          hubBalance: number;
+          commitmentHash: string;
+          timestamp: string;
+        };
+      }>;
+      totalAmount: number;
+      timestamp: string;
+    }>(
+      '/wallet/channel/routing-payment',
+      {
+        method: 'POST',
+        body: JSON.stringify({ senderAddress, recipients }),
+      }
+    );
+  }
+
+  async getHubLedger(sync: boolean = false) {
+    return this.request<{
+      ledger: Array<{
+        userAddress: string;
+        balance: number;
+        channelId: string;
+        lastUpdated: string;
+      }>;
+      count: number;
+      synced?: boolean;
+    }>(`/wallet/hub/ledger${sync ? '?sync=true' : ''}`);
+  }
+
+  async syncHubLedger() {
+    return this.request<{
+      success: boolean;
+      message: string;
+      ledger: Array<{
+        userAddress: string;
+        balance: number;
+        channelId: string;
+        lastUpdated: string;
+      }>;
+      count: number;
+    }>('/wallet/hub/ledger/sync', {
+      method: 'POST',
+    });
+  }
+
+  async clearHubLedger() {
+    return this.request<{
+      success: boolean;
+      message: string;
+      ledger: Array<{
+        userAddress: string;
+        balance: number;
+        channelId: string;
+        lastUpdated: string;
+      }>;
+      count: number;
+    }>('/wallet/hub/ledger/clear', {
+      method: 'POST',
+    });
+  }
+
+  async unilateralExit(channelId: string, userPrivateKey: string) {
+    return this.request<{
+      exitTxid: string;
+      csvLockTime: string;
+      unlockTime: string;
+      message: string;
+    }>(
+      '/wallet/channel/unilateral-exit',
+      {
+        method: 'POST',
+        body: JSON.stringify({ channelId, userPrivateKey }),
+      }
+    );
+  }
+
+  async watchtowerCheck(channelId: string) {
+    return this.request<{
+      isStale: boolean;
+      latestCommitment: number;
+      detectedCommitment?: number;
+      message: string;
+    }>(`/wallet/channel/${channelId}/watchtower`);
+  }
+
+  async competingRemedy(channelId: string, staleCommitmentNumber: number) {
+    return this.request<{
+      remedyTxid: string;
+      success: boolean;
+      message: string;
+    }>(
+      '/wallet/channel/competing-remedy',
+      {
+        method: 'POST',
+        body: JSON.stringify({ channelId, staleCommitmentNumber }),
+      }
+    );
   }
 }
 

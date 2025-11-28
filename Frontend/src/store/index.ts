@@ -9,6 +9,13 @@ const persistConfig = {
   key: 'root',
   storage,
   whitelist: ['wallet', 'network'], // Only persist these slices
+  migrate: (state: any) => {
+    // Migration: Ensure userWallets is always an array
+    if (state && state.network && !Array.isArray(state.network.userWallets)) {
+      state.network.userWallets = [];
+    }
+    return Promise.resolve(state);
+  },
 };
 
 const rootReducer = combineReducers({

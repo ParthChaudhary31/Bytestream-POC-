@@ -4,6 +4,7 @@ import { WalletController } from '../controllers/walletController';
 const router = Router();
 
 router.get('/generate-wallet', WalletController.generateWallet);
+router.post('/register-public-key', WalletController.registerPublicKey);
 router.post('/create-taproot-multisig', WalletController.createTaprootMultisig);
 router.post('/create-transaction', WalletController.createTransaction);
 
@@ -25,6 +26,15 @@ router.post('/channel/close', WalletController.closeChannel);
 router.get('/channel/:channelId', WalletController.getChannel);
 router.get('/channels/user/:userAddress', WalletController.getUserChannels);
 router.get('/channels/open', WalletController.getOpenChannels);
+
+// ByteStream L2 routing endpoints
+router.post('/channel/routing-payment', WalletController.routingPayment);
+router.get('/hub/ledger', WalletController.getHubLedger);
+router.post('/hub/ledger/sync', WalletController.syncHubLedger);
+router.post('/hub/ledger/clear', WalletController.clearHubLedger);
+router.post('/channel/unilateral-exit', WalletController.unilateralExit);
+router.get('/channel/:channelId/watchtower', WalletController.watchtowerCheck);
+router.post('/channel/competing-remedy', WalletController.competingRemedy);
 
 export default router;
 
