@@ -37,7 +37,6 @@ export const initTaprootAccount = (sequelize: Sequelize): typeof TaprootAccount 
     address: {
         type: DataTypes.STRING,
         allowNull: false,
-      unique: true,
     },
     userAddress: {
         type: DataTypes.STRING,
@@ -70,15 +69,7 @@ export const initTaprootAccount = (sequelize: Sequelize): typeof TaprootAccount 
         {
           unique: true,
           fields: ['address'],
-        },
-        {
-          fields: ['isActive', 'createdAt'],
-        },
-        {
-          fields: ['userAddress'],
-        },
-        {
-          fields: ['hubAddress'],
+          name: 'taproot_accounts_address_unique',
         },
       ],
     }

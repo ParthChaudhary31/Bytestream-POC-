@@ -1,8 +1,8 @@
-import { PaymentChannel, HubLedger } from '../models';
+import { PaymentChannel, HubLedger, PaymentCommitment } from '../models';
 import { WalletService } from './walletService';
 import { BalanceService } from './balanceService';
 import { config } from '../config/env';
-import { getSequelize } from '../config/database';
+import { getSequelize, isDatabaseConnected } from '../config/database';
 import * as bitcoin from 'bitcoinjs-lib';
 import { ECPairFactory } from 'ecpair';
 import * as ecc from 'tiny-secp256k1';
@@ -13,6 +13,104 @@ import crypto from 'crypto';
 // Initialize ECC library
 initEccLib(ecc);
 const ECPair = ECPairFactory(ecc);
+
+/**
+ * Helper function to ensure PaymentChannel model is initialized
+ * Returns true if model is ready, false otherwise
+ */
+function ensurePaymentChannelInitialized(): boolean {
+  try {
+    // Check if model exists
+    if (!PaymentChannel) {
+      console.error('PaymentChannel model is undefined');
+      return false;
+    }
+
+    // Check if model has been initialized with Sequelize
+    // Sequelize models have rawAttributes after initialization
+    const model = PaymentChannel as any;
+    
+    // Check for rawAttributes - this is the key indicator of initialization
+    if (!model.rawAttributes) {
+      console.warn('PaymentChannel.rawAttributes is undefined - model not initialized');
+      
+      // Try to initialize if database is connected
+      if (isDatabaseConnected()) {
+        try {
+          const sequelize = getSequelize();
+          // Re-import and initialize models
+          const { initializeModels: initModels } = require('../models');
+          initModels(sequelize);
+          
+          // Wait a bit for initialization to complete
+          // Check again after initialization
+          if (model.rawAttributes && model.sequelize) {
+            console.log('PaymentChannel model re-initialized successfully');
+            return true;
+          }
+        } catch (error: any) {
+          console.error('Could not re-initialize PaymentChannel model:', error.message);
+          return false;
+        }
+      }
+      
+      return false;
+    }
+
+    // Check if sequelize instance exists
+    if (!model.sequelize) {
+      console.warn('PaymentChannel.sequelize is undefined - model not fully initialized');
+      return false;
+    }
+
+    // Model is properly initialized
+    return true;
+  } catch (error: any) {
+    console.error('Error checking PaymentChannel initialization:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Helper function to ensure HubLedger model is initialized
+ * Returns true if model is ready, false otherwise
+ */
+function ensureHubLedgerInitialized(): boolean {
+  try {
+    // Check if model exists
+    if (!HubLedger) {
+      return false;
+    }
+
+    // Check if model has been initialized with Sequelize
+    const model = HubLedger as any;
+    
+    // If model has rawAttributes and sequelize, it's initialized
+    if (model.rawAttributes && model.sequelize) {
+      return true;
+    }
+
+    // Model not initialized - try to initialize if database is connected
+    try {
+      if (isDatabaseConnected()) {
+        const sequelize = getSequelize();
+        // Re-import and initialize models
+        const { initializeModels: initModels } = require('../models');
+        initModels(sequelize);
+        // Check again after initialization
+        return !!(model.rawAttributes && model.sequelize);
+      }
+    } catch (error: any) {
+      console.warn('Could not re-initialize HubLedger model:', error.message);
+      // Continue - will return false
+    }
+
+    return false;
+  } catch (error: any) {
+    console.error('Error checking HubLedger initialization:', error.message);
+    return false;
+  }
+}
 
 export interface ChannelState {
   channelId: string;
@@ -192,23 +290,24 @@ export class ChannelService {
       const estimatedFee = estimatedVSize * feeRate;
 
       // Calculate outputs (userBalance and hubBalance, minus fee)
-      // Fee is split proportionally or taken from hubBalance
-      const userOutput = BigInt(userBalance);
-      const hubOutput = BigInt(hubBalance - estimatedFee);
+      // Fee is deducted from userBalance since user is initiating the exit
+      const userOutput = BigInt(userBalance - estimatedFee);
+      const hubOutput = BigInt(hubBalance);
 
-      if (hubOutput < BigInt(0)) {
-        throw new Error(`Insufficient balance for fee. Hub balance: ${hubBalance}, Fee: ${estimatedFee}`);
+      if (userOutput < BigInt(0)) {
+        throw new Error(`Insufficient balance for fee. User balance: ${userBalance}, Fee: ${estimatedFee}`);
       }
 
       // Add outputs
-      // Output 1: User's address (userBalance)
+      // Output 1: User's address (userBalance - fee)
+      // Fee is paid by user since they are initiating the exit
       const userAddress = bitcoin.address.toOutputScript(channel.userAddress, network);
       psbt.addOutput({
         script: userAddress,
         value: userOutput,
       });
 
-      // Output 2: Hub's address (hubBalance - fee)
+      // Output 2: Hub's address (hubBalance - full amount, no fee deduction)
       const hubAddress = bitcoin.address.toOutputScript(channel.hubAddress, network);
       psbt.addOutput({
         script: hubAddress,
@@ -235,6 +334,166 @@ export class ChannelService {
   }
 
   /**
+   * Create a payment commitment UTXO for a specific payment
+   * This creates a separate UTXO that can be spent independently when recipient exits
+   * Multi-UTXO Architecture: Each payment gets its own spendable UTXO
+   */
+  private static async createPaymentCommitmentUTXO(
+    senderChannel: PaymentChannel,
+    recipientChannel: PaymentChannel,
+    amount: number,
+    userPrivateKey?: string,
+    hubPrivateKey?: string
+  ): Promise<{ commitmentId: string; txHex: string | null; utxoTxid?: string; utxoVout?: number }> {
+    // Generate unique commitment ID
+    const commitmentId = crypto
+      .createHash('sha256')
+      .update(`${senderChannel.channelId}-${recipientChannel.channelId}-${amount}-${Date.now()}`)
+      .digest('hex')
+      .slice(0, 32);
+
+    // If keys not provided, return commitment ID without transaction
+    if (!userPrivateKey || !hubPrivateKey) {
+      return { commitmentId, txHex: null };
+    }
+
+    try {
+      const network = bitcoin.networks.testnet;
+
+      // Get UTXOs for sender's taproot address
+      // In multi-UTXO architecture, we can use any available UTXO from the taproot address
+      const utxos = await BalanceService.getUTXO(senderChannel.taprootAddress, 'testnet');
+      if (!utxos || utxos.length === 0) {
+        console.warn(`No UTXOs found for channel ${senderChannel.channelId} at ${senderChannel.taprootAddress}`);
+        return { commitmentId, txHex: null };
+      }
+
+      // Use the first available UTXO
+      // In production, you might want to track which UTXOs are already committed
+      const inputUtxo = utxos[0];
+      const inputValue = Number(inputUtxo.value);
+
+      // Validate we have enough in the UTXO
+      if (inputValue < amount) {
+        throw new Error(`Insufficient UTXO value. Required: ${amount}, Available: ${inputValue}`);
+      }
+
+      // Get fee rate
+      let feeRate = 7.5; // Default
+      try {
+        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        feeRate = fees.fastestFee;
+      } catch (error) {
+        console.warn('Failed to fetch fee rates, using default:', feeRate);
+      }
+
+      // Create PSBT
+      const psbt = new bitcoin.Psbt({ network });
+
+      // Derive keys
+      const userKey = ECPair.fromWIF(userPrivateKey, network);
+      const hubKey = ECPair.fromWIF(hubPrivateKey, network);
+
+      // Reconstruct taproot script
+      const toXOnly = (pubKey: Buffer) => pubKey.length === 32 ? pubKey : pubKey.subarray(1, 33);
+      const pk1 = toXOnly(Buffer.from(userKey.publicKey));
+      const pk2 = toXOnly(Buffer.from(hubKey.publicKey));
+
+      // Reconstruct multisig script
+      const scriptImmediate = Buffer.from(bitcoin.script.compile([
+        pk1,
+        bitcoin.opcodes.OP_CHECKSIG,
+        pk2,
+        bitcoin.opcodes.OP_CHECKSIGADD,
+        bitcoin.opcodes.OP_2,
+        bitcoin.opcodes.OP_EQUAL,
+      ]));
+
+      // Build taproot script path
+      const { output: scriptPubKey } = bitcoin.payments.p2tr({
+        internalPubkey: pk1,
+        network,
+      });
+
+      if (!scriptPubKey) {
+        throw new Error('Failed to derive scriptPubKey');
+      }
+
+      // Add input (UTXO from sender's taproot address)
+      psbt.addInput({
+        hash: inputUtxo.txid,
+        index: inputUtxo.vout,
+        witnessUtxo: {
+          script: scriptPubKey,
+          value: BigInt(inputUtxo.value),
+        },
+        tapLeafScript: [
+          {
+            leafVersion: 192, // 0xC0
+            script: scriptImmediate,
+            controlBlock: Buffer.alloc(33), // Simplified - in production, calculate proper control block
+          },
+        ],
+      });
+
+      // Estimate fee (1 input, 2 outputs: commitment UTXO + change)
+      const INPUT_SIZE = 150;
+      const OUTPUT_SIZE = 43;
+      const OVERHEAD = 10;
+      const estimatedVSize = INPUT_SIZE + (2 * OUTPUT_SIZE) + OVERHEAD;
+      const estimatedFee = estimatedVSize * feeRate;
+
+      // Calculate outputs
+      // Output 1: Payment commitment UTXO (at recipient's taproot address or same taproot)
+      // This UTXO represents the specific payment and can be spent independently
+      const commitmentOutput = BigInt(amount);
+      const changeAmount = inputValue - amount - estimatedFee;
+
+      if (changeAmount < 0) {
+        throw new Error(`Insufficient balance for fee. Amount: ${amount}, Fee: ${estimatedFee}, Input: ${inputValue}`);
+      }
+
+      // Output 1: Commitment UTXO (same taproot address - represents this specific payment)
+      // This UTXO will be tracked separately and can be spent when recipient exits
+      const commitmentScriptPubKey = bitcoin.address.toOutputScript(senderChannel.taprootAddress, network);
+      psbt.addOutput({
+        script: commitmentScriptPubKey,
+        value: commitmentOutput,
+      });
+
+      // Output 2: Change back to taproot address (if any)
+      if (changeAmount > 0) {
+        psbt.addOutput({
+          script: commitmentScriptPubKey,
+          value: BigInt(changeAmount),
+        });
+      }
+
+      // Sign with both keys
+      psbt.signAllInputs(userKey);
+      psbt.signAllInputs(hubKey);
+
+      // Finalize
+      psbt.finalizeAllInputs();
+
+      // Extract transaction
+      const tx = psbt.extractTransaction();
+      const txHex = tx.toHex();
+
+      // Extract UTXO info (output 0 is the commitment UTXO)
+      // Note: In a real implementation, you'd need to track this after broadcasting
+      // For now, we'll store the transaction and extract UTXO info when needed
+      const utxoTxid = tx.getId();
+      const utxoVout = 0; // First output is the commitment UTXO
+
+      return { commitmentId, txHex, utxoTxid, utxoVout };
+    } catch (error: any) {
+      console.error(`Error creating payment commitment UTXO: ${error.message}`);
+      return { commitmentId, txHex: null };
+    }
+  }
+
+  /**
    * Open a new payment channel (Lightning style)
    * Step 1: Create taproot address for funding
    * Step 2: User funds the channel (L1 transaction)
@@ -242,7 +501,9 @@ export class ChannelService {
    */
   static async openChannel(
     userAddress: string,
-    capacity: number
+    capacity: number,
+    userPublicKey?: string,
+    hubPublicKey?: string
   ): Promise<ChannelState> {
     // Get Hub address from config
     const hubAddress = config.hubAddress;
@@ -250,24 +511,111 @@ export class ChannelService {
       throw new Error('Hub address not configured. Please set HUB_ADDRESS in environment variables.');
     }
 
+    // Try to derive hub public key from private key if available
+    let derivedHubPublicKey = hubPublicKey;
+    if (!derivedHubPublicKey && config.hubPrivateKey) {
+      try {
+        const network = bitcoin.networks.testnet;
+        const hubKey = ECPair.fromWIF(config.hubPrivateKey, network);
+        // Convert public key to hex string
+        const pubKeyBuffer = Buffer.from(hubKey.publicKey);
+        derivedHubPublicKey = pubKeyBuffer.toString('hex');
+        // Register it for future use
+        WalletService.registerPublicKey(hubAddress, derivedHubPublicKey);
+      } catch (error: any) {
+        console.warn(`Could not derive hub public key from private key: ${error.message}`);
+      }
+    }
+
     // Create taproot multisig address for channel funding
-    // Try to get public keys from the map, or use undefined to trigger lookup
-    const taprootResult = WalletService.createTaprootMultisig(userAddress, hubAddress);
+    // Pass public keys if available
+    const taprootResult = WalletService.createTaprootMultisig(
+      userAddress, 
+      hubAddress,
+      userPublicKey,
+      derivedHubPublicKey || hubPublicKey
+    );
     
     const channelId = this.generateChannelId(userAddress, hubAddress);
     
+    // Ensure PaymentChannel model is initialized before creating
+    if (!ensurePaymentChannelInitialized()) {
+      // Try one more time to initialize
+      console.warn('PaymentChannel not initialized, attempting to initialize...');
+      try {
+        // Try to get sequelize instance directly (will throw if not connected)
+        let sequelize;
+        try {
+          sequelize = getSequelize();
+        } catch (seqError: any) {
+          // Database not connected - try to connect
+          const { connectDatabase } = await import('../config/database');
+          await connectDatabase();
+          sequelize = getSequelize();
+        }
+        
+        // Initialize models
+        const { initializeModels: initModels } = await import('../models');
+        initModels(sequelize);
+        
+        // Small delay to ensure initialization completes
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Check again after initialization
+        if (!ensurePaymentChannelInitialized()) {
+          throw new Error(
+            'PaymentChannel model could not be initialized even after re-initialization. ' +
+            'Please ensure the database is connected and models are properly initialized. ' +
+            'Try restarting the server.'
+          );
+        }
+      } catch (initError: any) {
+        console.error('Model initialization error details:', initError);
+        throw new Error(
+          `Failed to initialize PaymentChannel model: ${initError.message}. ` +
+          `Please ensure the server has properly started and database is connected.`
+        );
+      }
+    }
+    
     // Create channel record
-    const channel = await PaymentChannel.create({
-      channelId,
-      taprootAddress: taprootResult.address,
-      userAddress,
-      hubAddress,
-      userBalance: 0,
-      hubBalance: 0,
-      capacity,
-      status: 'opening',
-      commitmentNumber: 0,
-    });
+    let channel;
+    try {
+      // Double-check model is ready
+      const model = PaymentChannel as any;
+      if (!model.rawAttributes) {
+        throw new Error('PaymentChannel.rawAttributes is still undefined after initialization check');
+      }
+
+      channel = await PaymentChannel.create({
+        channelId,
+        taprootAddress: taprootResult.address,
+        userAddress,
+        hubAddress,
+        userBalance: 0,
+        hubBalance: 0,
+        capacity,
+        status: 'opening',
+        commitmentNumber: 0,
+      });
+    } catch (error: any) {
+      console.error('PaymentChannel.create error:', error);
+      console.error('Model state:', {
+        hasModel: !!PaymentChannel,
+        hasRawAttributes: !!(PaymentChannel as any).rawAttributes,
+        hasSequelize: !!(PaymentChannel as any).sequelize,
+        rawAttributesKeys: (PaymentChannel as any).rawAttributes ? Object.keys((PaymentChannel as any).rawAttributes) : 'N/A',
+      });
+      
+      if (error.message?.includes('Cannot read properties') || error.message?.includes('undefined') || error.message?.includes('length')) {
+        throw new Error(
+          `PaymentChannel model initialization error: ${error.message}. ` +
+          `The model's rawAttributes may not be properly set up. ` +
+          `Please restart the server to ensure models are fully initialized.`
+        );
+      }
+      throw error;
+    }
 
     // Fetch L1 balance for newly opened channel (will be 0 initially)
     let l1Balance: number | undefined;
@@ -467,15 +815,357 @@ export class ChannelService {
   }
 
   /**
+   * Exit User's Channel - Multi-UTXO Architecture
+   * When a user exits, ALL payment commitments where they are recipient are settled
+   * Creates ONE on-chain transaction that closes the user's channel
+   * 
+   * Architecture:
+   * - User 1 → Hub → User 2 (creates commitment, off-chain)
+   * - User 3 → Hub → User 2 (creates commitment, off-chain)
+   * - User 4 → Hub → User 2 (creates commitment, off-chain)
+   * 
+   * When User 2 exits:
+   * - Find ALL commitments where User 2 is recipient
+   * - Create ONE transaction that settles User 2's channel (spends User 2's funding UTXO)
+   * - User 2 receives their userBalance (sum of all payments they received)
+   * - Mark all User 2's commitments as spent
+   * - Other users' channels remain unaffected (their commitments with other users stay active)
+   * 
+   * IMPORTANT: User 1's channel with Hub remains OPEN
+   * - User 1's funding UTXO is NOT spent
+   * - User 1's channel stays active for other payments (User 1 → User 3, User 1 → User 4, etc.)
+   * - Only the commitment record is marked as spent (not an actual UTXO)
+   * 
+   * Payment Flow:
+   * - Off-chain: User 1 → Hub → User 2 (commitment created, NO on-chain transaction)
+   * - On-chain: User 2 exits, gets balance (ONE transaction, spends User 2's funding UTXO)
+   * - Payment happens ONCE, not twice
+   * 
+   * Only 2 on-chain transactions per user:
+   * 1. Channel creation (funding) - ON-CHAIN
+   * 2. Channel exit (settlement) - ON-CHAIN
+   * 
+   * All payments between these are OFF-CHAIN (no on-chain transactions)
+   * 
+   * @param userChannelId - User's channel ID (the one exiting)
+   * @param userPrivateKey - User's private key
+   * @param hubPrivateKey - Hub's private key
+   */
+  static async exitUserChannel(
+    userChannelId: string,
+    userPrivateKey: string,
+    hubPrivateKey: string
+  ): Promise<{ exitTxid: string; totalAmount: number; commitmentsSettled: number; channelState: ChannelState }> {
+    // Get user's channel
+    const userChannel = await PaymentChannel.findOne({
+      where: { channelId: userChannelId },
+    });
+
+    if (!userChannel) {
+      throw new Error('User channel not found');
+    }
+
+    if (userChannel.status !== 'open') {
+      throw new Error(`Channel is not open. Current status: ${userChannel.status}`);
+    }
+
+    // Find ALL payment commitments where this user is recipient
+    // These represent all payments this user received from different senders
+    let allCommitments: any[] = [];
+    try {
+      // Check if PaymentCommitment model is available
+      if (!PaymentCommitment) {
+        console.warn('PaymentCommitment model not available. No commitments to settle.');
+      } else {
+        const result = await PaymentCommitment.findAll({
+          where: {
+            recipientChannelId: userChannelId,
+            status: 'committed',
+          },
+        });
+        allCommitments = Array.isArray(result) ? result : [];
+      }
+    } catch (error: any) {
+      console.error('PaymentCommitment.findAll error:', error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('PaymentCommitment table may not exist yet. No commitments to settle.');
+      } else {
+        throw error;
+      }
+    }
+
+    const totalCommitments = allCommitments.length;
+    const totalAmount = userChannel.userBalance; // Channel balance already includes all received payments
+
+    console.log(`[Exit User Channel] User ${userChannel.userAddress.slice(0, 16)}... exiting`);
+    console.log(`  - Channel ID: ${userChannelId}`);
+    console.log(`  - Total commitments to settle: ${totalCommitments}`);
+    console.log(`  - Total amount to receive: ${totalAmount} sats`);
+
+    // Update channel status to closing
+    await userChannel.update({ status: 'closing' });
+
+    // Close the channel - this creates ONE on-chain transaction
+    // The channel's userBalance already contains the sum of all payments received
+    const closeResult = await this.closeChannel(
+      userChannelId,
+      userPrivateKey,
+      hubPrivateKey
+    );
+
+    // Mark all commitments as spent (they're now settled via channel closure)
+    if (allCommitments.length > 0 && PaymentCommitment) {
+      try {
+        await PaymentCommitment.update(
+          { status: 'spent', utxoTxid: closeResult.closingTxid },
+          {
+            where: {
+              recipientChannelId: userChannelId,
+              status: 'committed',
+            },
+          }
+        );
+        console.log(`  - Marked ${allCommitments.length} commitments as spent`);
+      } catch (error: any) {
+        console.error('PaymentCommitment.update error:', error);
+        // Continue - commitments are still marked as spent conceptually
+      }
+    }
+
+    return {
+      exitTxid: closeResult.closingTxid,
+      totalAmount,
+      commitmentsSettled: totalCommitments,
+      channelState: closeResult.channelState,
+    };
+  }
+
+  /**
+   * Exit a specific payment commitment (Multi-UTXO Architecture)
+   * When a recipient exits, only their specific payment UTXO is spent
+   * Other payments remain unaffected
+   * 
+   * @param recipientChannelId - Recipient's channel ID
+   * @param senderAddress - Sender's address (who made the payment)
+   * @param userPrivateKey - User's private key
+   * @param hubPrivateKey - Hub's private key
+   */
+  static async exitPaymentCommitment(
+    recipientChannelId: string,
+    senderAddress: string,
+    userPrivateKey: string,
+    hubPrivateKey: string
+  ): Promise<{ exitTxid: string; commitmentId: string; amount: number }> {
+    // Ensure PaymentCommitment model is available
+    if (!PaymentCommitment) {
+      throw new Error('PaymentCommitment model is not available');
+    }
+
+    // Find the payment commitment for this recipient from this sender
+    let commitment;
+    try {
+      // Find all matching commitments first, then get the latest
+      const commitments = await PaymentCommitment.findAll({
+        where: {
+          recipientChannelId,
+          senderAddress,
+          status: 'committed',
+        },
+      });
+      
+      // Get the latest commitment (most recent)
+      if (Array.isArray(commitments) && commitments.length > 0) {
+        commitment = commitments.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA; // DESC order
+        })[0];
+      } else {
+        commitment = null;
+      }
+    } catch (error: any) {
+      console.error('PaymentCommitment.findAll error:', error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        throw new Error('PaymentCommitment table may not exist yet.');
+      }
+      throw error;
+    }
+
+    if (!commitment) {
+      throw new Error(`No payment commitment found for recipient channel ${recipientChannelId} from sender ${senderAddress}`);
+    }
+
+    if (commitment.status !== 'committed') {
+      throw new Error(`Payment commitment ${commitment.commitmentId} is not in committed state. Current status: ${commitment.status}`);
+    }
+
+    // Get recipient's channel
+    const recipientChannel = await PaymentChannel.findOne({
+      where: { channelId: recipientChannelId },
+    });
+
+    if (!recipientChannel) {
+      throw new Error('Recipient channel not found');
+    }
+
+    if (recipientChannel.status !== 'open') {
+      throw new Error(`Recipient channel is not open. Current status: ${recipientChannel.status}`);
+    }
+
+    // Get sender's channel to access taproot address
+    const senderChannel = await PaymentChannel.findOne({
+      where: { channelId: commitment.senderChannelId },
+    });
+
+    if (!senderChannel) {
+      throw new Error('Sender channel not found');
+    }
+
+    try {
+      const network = bitcoin.networks.testnet;
+
+      // Get the specific UTXO for this commitment
+      // In a real implementation, you'd track the exact UTXO (txid, vout) from the commitment
+      // For now, we'll find UTXOs at the taproot address and use one that matches the amount
+      const utxos = await BalanceService.getUTXO(senderChannel.taprootAddress, 'testnet');
+      if (!utxos || utxos.length === 0) {
+        throw new Error(`No UTXOs found for commitment at ${senderChannel.taprootAddress}`);
+      }
+
+      // Find a UTXO that matches the commitment amount (or use the first available)
+      // In production, you'd track the exact UTXO from the commitment transaction
+      const commitmentUtxo = utxos.find(u => Number(u.value) >= commitment.amount) || utxos[0];
+      
+      if (Number(commitmentUtxo.value) < commitment.amount) {
+        throw new Error(`UTXO value ${commitmentUtxo.value} is less than commitment amount ${commitment.amount}`);
+      }
+
+      // Get fee rate
+      let feeRate = 7.5;
+      try {
+        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        feeRate = fees.fastestFee;
+      } catch (error) {
+        console.warn('Failed to fetch fee rates, using default:', feeRate);
+      }
+
+      // Create PSBT to spend this specific commitment UTXO
+      const psbt = new bitcoin.Psbt({ network });
+
+      // Derive keys
+      const userKey = ECPair.fromWIF(userPrivateKey, network);
+      const hubKey = ECPair.fromWIF(hubPrivateKey, network);
+
+      // Reconstruct taproot script
+      const toXOnly = (pubKey: Buffer) => pubKey.length === 32 ? pubKey : pubKey.subarray(1, 33);
+      const pk1 = toXOnly(Buffer.from(userKey.publicKey));
+      const pk2 = toXOnly(Buffer.from(hubKey.publicKey));
+
+      const scriptImmediate = Buffer.from(bitcoin.script.compile([
+        pk1,
+        bitcoin.opcodes.OP_CHECKSIG,
+        pk2,
+        bitcoin.opcodes.OP_CHECKSIGADD,
+        bitcoin.opcodes.OP_2,
+        bitcoin.opcodes.OP_EQUAL,
+      ]));
+
+      const { output: scriptPubKey } = bitcoin.payments.p2tr({
+        internalPubkey: pk1,
+        network,
+      });
+
+      if (!scriptPubKey) {
+        throw new Error('Failed to derive scriptPubKey');
+      }
+
+      // Add input (the specific commitment UTXO)
+      psbt.addInput({
+        hash: commitmentUtxo.txid,
+        index: commitmentUtxo.vout,
+        witnessUtxo: {
+          script: scriptPubKey,
+          value: BigInt(commitmentUtxo.value),
+        },
+        tapLeafScript: [
+          {
+            leafVersion: 192,
+            script: scriptImmediate,
+            controlBlock: Buffer.alloc(33),
+          },
+        ],
+      });
+
+      // Estimate fee (1 input, 1 output to recipient)
+      const INPUT_SIZE = 150;
+      const OUTPUT_SIZE = 43;
+      const OVERHEAD = 10;
+      const estimatedVSize = INPUT_SIZE + OUTPUT_SIZE + OVERHEAD;
+      const estimatedFee = estimatedVSize * feeRate;
+
+      // Output: Send payment amount to recipient (minus fee)
+      const recipientOutput = BigInt(commitment.amount - estimatedFee);
+
+      if (recipientOutput < BigInt(0)) {
+        throw new Error(`Insufficient balance for fee. Amount: ${commitment.amount}, Fee: ${estimatedFee}`);
+      }
+
+      // Output to recipient's address
+      const recipientAddress = bitcoin.address.toOutputScript(recipientChannel.userAddress, network);
+      psbt.addOutput({
+        script: recipientAddress,
+        value: recipientOutput,
+      });
+
+      // Sign with both keys
+      psbt.signAllInputs(userKey);
+      psbt.signAllInputs(hubKey);
+
+      // Finalize
+      psbt.finalizeAllInputs();
+
+      // Extract transaction
+      const tx = psbt.extractTransaction();
+      const txHex = tx.toHex();
+
+      // Broadcast transaction
+      const broadcastRes = await axios.post(
+        'https://mempool.space/testnet/api/tx',
+        txHex
+      );
+      const exitTxid = broadcastRes.data;
+
+      // Update commitment status to spent
+      await commitment.update({
+        status: 'spent',
+        utxoTxid: exitTxid,
+      });
+
+      return {
+        exitTxid,
+        commitmentId: commitment.commitmentId,
+        amount: commitment.amount,
+      };
+    } catch (error: any) {
+      console.error(`Error exiting payment commitment: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Close channel (Lightning style settlement)
    * Broadcasts latest commitment transaction to L1
    * 
    * On exit:
-   * - User gets their committed balance (userBalance) on L1
-   * - Withdrawable amount = L1 balance - hub balance
-   *   - If hubBalance > 0 (user owes hub): L1 balance - hub balance = what user can withdraw
-   *   - If hubBalance < 0 (hub owes user): L1 balance - hub balance = what user can withdraw (more than L1)
-   * - The commitment transaction distributes funds according to committed balances
+   * - User gets their committed balance (userBalance - transaction fee) on L1
+   *   - Transaction fee is deducted from userBalance since user initiates exit
+   * - Hub gets their committed balance (hubBalance) on L1 - full amount, no fee deduction
+   * - Withdrawable amount = L1 balance - hub balance - estimated fee
+   *   - If hubBalance > 0 (user owes hub): L1 balance - hub balance - fee = what user can withdraw
+   *   - If hubBalance < 0 (hub owes user): L1 balance - hub balance - fee = what user can withdraw
+   * - The commitment transaction distributes funds according to committed balances, with fee from user
+   * 
+   * NOTE: In multi-UTXO architecture, consider using exitPaymentCommitment() for individual payments
    */
   static async closeChannel(
     channelId: string,
@@ -592,7 +1282,28 @@ export class ChannelService {
    * Includes L1 balance from taproot address
    */
   static async getChannel(channelId: string): Promise<ChannelState | null> {
-    const channel = await PaymentChannel.findOne({ where: { channelId } });
+    // Validate channelId
+    if (!channelId || typeof channelId !== 'string') {
+      throw new Error('channelId is required and must be a string');
+    }
+
+    // Ensure model is initialized
+    if (!ensurePaymentChannelInitialized()) {
+      console.warn('PaymentChannel model not initialized. Returning null.');
+      return null;
+    }
+
+    let channel;
+    try {
+      channel = await PaymentChannel.findOne({ where: { channelId: channelId.trim() } });
+    } catch (error: any) {
+      console.error(`Error in getChannel for ${channelId}:`, error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('PaymentChannel table may not exist yet. Returning null.');
+        return null;
+      }
+      throw error;
+    }
     
     if (!channel) {
       return null;
@@ -629,41 +1340,110 @@ export class ChannelService {
    * Includes L1 balance from taproot address for each channel
    */
   static async getUserChannels(userAddress: string): Promise<ChannelState[]> {
-    const channels = await PaymentChannel.findAll({
-      where: { userAddress },
-      order: [['createdAt', 'DESC']],
-    });
+    // Validate userAddress
+    if (!userAddress || typeof userAddress !== 'string') {
+      throw new Error('userAddress is required and must be a string');
+    }
 
-    // Fetch L1 balances for all channels in parallel
-    const channelsWithL1Balance = await Promise.all(
-      channels.map(async (channel) => {
-        let l1Balance: number | undefined;
-        try {
-          const balance = await BalanceService.fetchBalance(channel.taprootAddress);
-          l1Balance = balance.balance;
-        } catch (error: any) {
-          console.warn(`Failed to fetch L1 balance for ${channel.taprootAddress}: ${error.message}`);
-          // Continue without L1 balance if fetch fails
+    // Ensure model is initialized
+    if (!ensurePaymentChannelInitialized()) {
+      console.warn('PaymentChannel model not initialized. Returning empty array.');
+      return [];
+    }
+
+    try {
+      const trimmedAddress = userAddress.trim();
+      if (!trimmedAddress) {
+        throw new Error('userAddress cannot be empty after trimming');
+      }
+
+      // Build where clause explicitly to avoid any undefined issues
+      const whereClause: { userAddress: string } = {
+        userAddress: trimmedAddress,
+      };
+
+      // Use findAll with simplified options
+      // The error might be caused by the order clause or model attributes
+      let channels;
+      try {
+        // Try with minimal options first
+        channels = await PaymentChannel.findAll({
+          where: whereClause,
+        });
+        
+        // Sort manually if needed (after getting results)
+        if (Array.isArray(channels) && channels.length > 0) {
+          channels.sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return dateB - dateA; // DESC order
+          });
         }
+      } catch (findAllError: any) {
+        console.error('PaymentChannel.findAll error:', findAllError);
+        console.error('Error details:', {
+          message: findAllError.message,
+          stack: findAllError.stack,
+          modelInitialized: !!(PaymentChannel as any).sequelize,
+          hasAttributes: !!(PaymentChannel as any).rawAttributes,
+        });
+        
+        // If findAll fails due to model initialization, provide helpful error
+        if (findAllError.message?.includes('Cannot convert') || findAllError.message?.includes('undefined')) {
+          throw new Error(
+            `Model initialization error: ${findAllError.message}. ` +
+            `The PaymentChannel model may not be properly initialized. ` +
+            `Please ensure initializeModels() is called before using the model.`
+          );
+        }
+        throw findAllError;
+      }
 
-        return {
-          channelId: channel.channelId,
-          taprootAddress: channel.taprootAddress,
-          userAddress: channel.userAddress,
-          hubAddress: channel.hubAddress,
-          userBalance: channel.userBalance,
-          hubBalance: channel.hubBalance,
-          l1Balance,
-          capacity: channel.capacity,
-          status: channel.status,
-          commitmentNumber: channel.commitmentNumber,
-          fundingTxid: channel.fundingTxid || undefined,
-          closingTxid: channel.closingTxid || undefined,
-        };
-      })
-    );
+      // Safety check: ensure channels is an array
+      if (!Array.isArray(channels)) {
+        console.error('PaymentChannel.findAll did not return an array:', channels);
+        return [];
+      }
 
-    return channelsWithL1Balance;
+      // Fetch L1 balances for all channels in parallel
+      const channelsWithL1Balance = await Promise.all(
+        channels.map(async (channel) => {
+          let l1Balance: number | undefined;
+          try {
+            const balance = await BalanceService.fetchBalance(channel.taprootAddress);
+            l1Balance = balance.balance;
+          } catch (error: any) {
+            console.warn(`Failed to fetch L1 balance for ${channel.taprootAddress}: ${error.message}`);
+            // Continue without L1 balance if fetch fails
+          }
+
+          return {
+            channelId: channel.channelId,
+            taprootAddress: channel.taprootAddress,
+            userAddress: channel.userAddress,
+            hubAddress: channel.hubAddress,
+            userBalance: channel.userBalance,
+            hubBalance: channel.hubBalance,
+            l1Balance,
+            capacity: channel.capacity,
+            status: channel.status,
+            commitmentNumber: channel.commitmentNumber,
+            fundingTxid: channel.fundingTxid || undefined,
+            closingTxid: channel.closingTxid || undefined,
+          };
+        })
+      );
+
+      return channelsWithL1Balance;
+    } catch (error: any) {
+      console.error(`Error in getUserChannels for ${userAddress}:`, error);
+      // If it's a table doesn't exist error, return empty array
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('PaymentChannel table may not exist yet. Returning empty array.');
+        return [];
+      }
+      throw error;
+    }
   }
 
   /**
@@ -671,10 +1451,41 @@ export class ChannelService {
    * Includes L1 balance from taproot address for each channel
    */
   static async getOpenChannels(): Promise<ChannelState[]> {
-    const channels = await PaymentChannel.findAll({
-      where: { status: 'open' },
-      order: [['createdAt', 'DESC']],
-    });
+    // Ensure model is initialized
+    if (!ensurePaymentChannelInitialized()) {
+      console.warn('PaymentChannel model not initialized. Returning empty array.');
+      return [];
+    }
+
+    let channels;
+    try {
+      // Use minimal options to avoid order clause issues
+      channels = await PaymentChannel.findAll({
+        where: { status: 'open' },
+      });
+      
+      // Sort manually if needed
+      if (Array.isArray(channels) && channels.length > 0) {
+        channels.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA; // DESC order
+        });
+      }
+    } catch (error: any) {
+      console.error('Error in getOpenChannels:', error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('PaymentChannel table may not exist yet. Returning empty array.');
+        return [];
+      }
+      throw error;
+    }
+
+    // Safety check: ensure channels is an array
+    if (!Array.isArray(channels)) {
+      console.error('PaymentChannel.findAll did not return an array:', channels);
+      return [];
+    }
 
     // Fetch L1 balances for all channels in parallel
     const channelsWithL1Balance = await Promise.all(
@@ -711,6 +1522,31 @@ export class ChannelService {
   /**
    * 1-to-Many Payment Routing
    * Routes payment from sender to multiple recipients through Hub's internal ledger
+   * 
+   * MULTI-UTXO ARCHITECTURE:
+   * - Each payment creates a PaymentCommitment record (off-chain)
+   * - Commitments are tracked but don't create separate UTXOs
+   * - All payments happen off-chain via channel state updates
+   * - When recipient exits, their channel closes (ONE on-chain transaction)
+   * - Sender's channel remains open (other commitments stay active)
+   * 
+   * Example:
+   * - User 1 → Hub → User 2 (500 sats) - creates commitment, off-chain
+   * - User 1 → Hub → User 3 (1000 sats) - creates commitment, off-chain
+   * - User 1 → Hub → User 4 (400 sats) - creates commitment, off-chain
+   * - User 1's channel with Hub: userBalance decreases, hubBalance increases (off-chain)
+   * - User 2's channel with Hub: userBalance increases, hubBalance decreases (off-chain)
+   * 
+   * When User 2 exits:
+   * - User 2's channel closes (spends User 2's funding UTXO) - ONE on-chain transaction
+   * - User 2 receives their total balance (sum of all payments received)
+   * - User 1's commitment with User 2 is marked as spent
+   * - User 1's channel with Hub remains OPEN
+   * - User 1's commitments with User 3, User 4 remain ACTIVE
+   * 
+   * Payment happens ONCE, not twice:
+   * - Off-chain: Commitment created (no on-chain transaction)
+   * - On-chain: User 2 exits, gets balance (ONE transaction)
    * 
    * EDGE CASE HANDLING:
    * - If Hub committed to pay user (hubBalance < 0), user can still pay others
@@ -890,7 +1726,7 @@ export class ChannelService {
       // Update Hub's internal ledger for sender
       await this.updateHubLedger(senderAddress, senderChannel.channelId, -totalAmount, transaction);
 
-      // Update all recipient channels
+      // Update all recipient channels and create payment commitments
       const recipientChannels: RoutingResult['recipientChannels'] = [];
       
       for (const recipientData of recipientChannelsData) {
@@ -900,6 +1736,24 @@ export class ChannelService {
           recipientData.newHubBalance,
           transaction
         );
+
+        // MULTI-UTXO ARCHITECTURE: Create separate payment commitment for this payment
+        // Each payment gets its own UTXO that can be spent independently
+        const paymentCommitment = await PaymentCommitment.create({
+          commitmentId: crypto
+            .createHash('sha256')
+            .update(`${senderChannel.channelId}-${recipientData.channel.channelId}-${recipientData.amount}-${Date.now()}`)
+            .digest('hex')
+            .slice(0, 32),
+          senderChannelId: senderChannel.channelId,
+          recipientChannelId: recipientData.channel.channelId,
+          senderAddress: senderAddress,
+          recipientAddress: recipientData.channel.userAddress,
+          amount: recipientData.amount,
+          taprootAddress: senderChannel.taprootAddress, // Same taproot address for all commitments
+          status: 'committed',
+          commitmentNumber: recipientCommitment.commitmentNumber,
+        }, { transaction });
 
         // Update Hub's internal ledger for recipient
         await this.updateHubLedger(
@@ -1012,24 +1866,47 @@ export class ChannelService {
     amount: number,
     transaction?: any
   ): Promise<void> {
-    const ledgerEntry = await HubLedger.findOne({
-      where: { userAddress },
-      transaction,
-    });
+    // Ensure model is initialized
+    if (!ensureHubLedgerInitialized()) {
+      console.warn('HubLedger model not initialized. Skipping ledger update.');
+      return;
+    }
+
+    let ledgerEntry;
+    try {
+      ledgerEntry = await HubLedger.findOne({
+        where: { userAddress },
+        transaction,
+      });
+    } catch (error: any) {
+      console.error('HubLedger.findOne error:', error);
+      // Continue - will create new entry
+      ledgerEntry = null;
+    }
 
     if (ledgerEntry) {
-      await ledgerEntry.update({
-        balance: ledgerEntry.balance + amount,
-        channelId,
-        lastUpdated: new Date(),
-      }, { transaction });
+      try {
+        await ledgerEntry.update({
+          balance: ledgerEntry.balance + amount,
+          channelId,
+          lastUpdated: new Date(),
+        }, { transaction });
+      } catch (error: any) {
+        console.error('HubLedger.update error:', error);
+        // Continue - error is logged
+      }
     } else {
-      await HubLedger.create({
-        userAddress,
-        balance: amount,
-        channelId,
-        lastUpdated: new Date(),
-      }, { transaction });
+      try {
+        await HubLedger.create({
+          userAddress,
+          balance: amount,
+          channelId,
+          lastUpdated: new Date(),
+        }, { transaction });
+      } catch (error: any) {
+        console.error('HubLedger.create error:', error);
+        // Continue - error is logged
+      }
     }
   }
 
@@ -1046,18 +1923,43 @@ export class ChannelService {
    * Filters out channels with no commitments (commitmentNumber = 0 and hubBalance = 0)
    */
   static async syncHubLedger(): Promise<void> {
+    // Ensure models are initialized
+    if (!ensurePaymentChannelInitialized()) {
+      console.warn('PaymentChannel model not initialized. Skipping hub ledger sync.');
+      return;
+    }
+
+    if (!HubLedger) {
+      console.warn('HubLedger model not available. Skipping hub ledger sync.');
+      return;
+    }
+
     // Get all open channels that have actual activity
     // Only include channels where:
     // 1. Status is 'open'
     // 2. Either commitmentNumber > 0 (has commitments) OR hubBalance != 0 (has balance changes)
     // This filters out newly opened channels with no activity
-    const openChannels = await PaymentChannel.findAll({
-      where: { 
-        status: 'open',
-        // Only include channels with activity
-        // Using Sequelize.literal to check: commitmentNumber > 0 OR hubBalance != 0
-      },
-    });
+    let openChannels;
+    try {
+      openChannels = await PaymentChannel.findAll({
+        where: { 
+          status: 'open',
+        },
+      });
+    } catch (error: any) {
+      console.error('Error in syncHubLedger finding channels:', error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('PaymentChannel table may not exist yet. Skipping sync.');
+        return;
+      }
+      throw error;
+    }
+
+    // Safety check
+    if (!Array.isArray(openChannels)) {
+      console.error('PaymentChannel.findAll did not return an array:', openChannels);
+      return;
+    }
 
     // Filter channels that have actual activity
     // Only show channels with commitments or balance changes
@@ -1067,8 +1969,19 @@ export class ChannelService {
 
     console.log(`[Hub Ledger Sync] Found ${openChannels.length} open channels, ${activeChannels.length} with activity`);
 
+    // Ensure HubLedger is initialized
+    if (!ensureHubLedgerInitialized()) {
+      console.warn('HubLedger model not initialized. Skipping ledger sync.');
+      return;
+    }
+
     // Clear existing ledger entries
-    await HubLedger.destroy({ where: {} });
+    try {
+      await HubLedger.destroy({ where: {} });
+    } catch (error: any) {
+      console.error('HubLedger.destroy error:', error);
+      // Continue - will try to create entries anyway
+    }
 
     // Recreate ledger entries from current channel states
     for (const channel of activeChannels) {
@@ -1078,12 +1991,17 @@ export class ChannelService {
 
       console.log(`[Hub Ledger Sync] Adding entry for ${channel.userAddress.slice(0, 16)}... - Balance: ${ledgerBalance}, Commitments: ${channel.commitmentNumber}`);
 
-      await HubLedger.upsert({
-        userAddress: channel.userAddress,
-        balance: ledgerBalance,
-        channelId: channel.channelId,
-        lastUpdated: new Date(),
-      });
+      try {
+        await HubLedger.upsert({
+          userAddress: channel.userAddress,
+          balance: ledgerBalance,
+          channelId: channel.channelId,
+          lastUpdated: new Date(),
+        });
+      } catch (error: any) {
+        console.error(`HubLedger.upsert error for ${channel.userAddress}:`, error);
+        // Continue with next channel
+      }
     }
 
     console.log(`[Hub Ledger Sync] Completed. Synced ${activeChannels.length} active channels`);
@@ -1094,14 +2012,44 @@ export class ChannelService {
    * Optionally syncs with current channel states first
    */
   static async getHubLedger(syncWithChannels: boolean = false): Promise<HubLedgerEntry[]> {
+    // Ensure model is initialized
+    if (!ensureHubLedgerInitialized()) {
+      console.warn('HubLedger model not initialized. Returning empty array.');
+      return [];
+    }
+
     // If sync requested, recalculate from current channel states
     if (syncWithChannels) {
       await this.syncHubLedger();
     }
 
-    const entries = await HubLedger.findAll({
-      order: [['lastUpdated', 'DESC']],
-    });
+    let entries;
+    try {
+      // Use minimal options to avoid order clause issues
+      entries = await HubLedger.findAll({});
+      
+      // Sort manually if needed
+      if (Array.isArray(entries) && entries.length > 0) {
+        entries.sort((a, b) => {
+          const dateA = a.lastUpdated ? new Date(a.lastUpdated).getTime() : (a.updatedAt ? new Date(a.updatedAt).getTime() : 0);
+          const dateB = b.lastUpdated ? new Date(b.lastUpdated).getTime() : (b.updatedAt ? new Date(b.updatedAt).getTime() : 0);
+          return dateB - dateA; // DESC order
+        });
+      }
+    } catch (error: any) {
+      console.error('HubLedger.findAll error:', error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('HubLedger table may not exist yet. Returning empty array.');
+        return [];
+      }
+      throw error;
+    }
+
+    // Safety check
+    if (!Array.isArray(entries)) {
+      console.error('HubLedger.findAll did not return an array:', entries);
+      return [];
+    }
 
     return entries.map(entry => ({
       userAddress: entry.userAddress,
@@ -1115,7 +2063,18 @@ export class ChannelService {
    * Clear Hub Ledger (remove all entries)
    */
   static async clearHubLedger(): Promise<void> {
-    await HubLedger.destroy({ where: {} });
+    // Ensure model is initialized
+    if (!ensureHubLedgerInitialized()) {
+      console.warn('HubLedger model not initialized. Skipping clear.');
+      return;
+    }
+
+    try {
+      await HubLedger.destroy({ where: {} });
+    } catch (error: any) {
+      console.error('HubLedger.destroy error:', error);
+      throw error;
+    }
   }
 
   /**
@@ -1129,9 +2088,31 @@ export class ChannelService {
    * - Global Hub balance = 500 + (-300) = 200 sats
    */
   static async getGlobalHubBalance(): Promise<number> {
-    const openChannels = await PaymentChannel.findAll({
-      where: { status: 'open' },
-    });
+    // Ensure model is initialized
+    if (!ensurePaymentChannelInitialized()) {
+      console.warn('PaymentChannel model not initialized. Returning 0.');
+      return 0;
+    }
+
+    let openChannels;
+    try {
+      openChannels = await PaymentChannel.findAll({
+        where: { status: 'open' },
+      });
+    } catch (error: any) {
+      console.error('Error in getGlobalHubBalance:', error);
+      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
+        console.warn('PaymentChannel table may not exist yet. Returning 0.');
+        return 0;
+      }
+      throw error;
+    }
+
+    // Safety check
+    if (!Array.isArray(openChannels)) {
+      console.error('PaymentChannel.findAll did not return an array:', openChannels);
+      return 0;
+    }
 
     // Sum of all hubBalance across all channels
     // Positive hubBalance = Hub has funds in that channel

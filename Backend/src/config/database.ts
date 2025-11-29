@@ -85,6 +85,19 @@ export const initializeModels = async (): Promise<void> => {
   
   // Sync models (creates tables if they don't exist)
   // Use alter: true to add new columns to existing tables
-  await sequelize.sync({ alter: true });
+  // Note: If you get "Too many keys" error, you may need to manually clean up indexes
+  // or temporarily use { force: false, alter: false } to skip table modifications
+  try {
+    await sequelize.sync({ alter: true });
+  } catch (error: any) {
+    if (error.message?.includes('Too many keys') || error.original?.code === 'ER_TOO_MANY_KEYS') {
+      console.warn('⚠️  Too many indexes detected. Skipping table alterations.');
+      console.warn('   Run fix_taproot_indexes.sql to clean up indexes, or use { force: false, alter: false }');
+      // Continue without altering - tables will work if they already exist
+      await sequelize.sync({ alter: false });
+    } else {
+      throw error;
+    }
+  }
 };
 

@@ -439,7 +439,13 @@ export class WalletController {
         }
       }
 
-      const channel = await ChannelService.openChannel(userAddress, capacity);
+      // Pass public keys to openChannel (it will derive hub public key from private key if needed)
+      const channel = await ChannelService.openChannel(
+        userAddress, 
+        capacity,
+        userPublicKey,
+        hubPublicKey
+      );
       res.json(channel);
     } catch (error) {
       const appError: AppError = error instanceof Error
@@ -809,6 +815,46 @@ export class WalletController {
       const appError: AppError = error instanceof Error
         ? error
         : new Error('Failed to create competing remedy');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Exit User's Channel - Multi-UTXO Architecture
+   * When a user exits, ALL payment commitments where they are recipient are settled
+   * Creates ONE on-chain transaction that closes the user's channel
+   * POST /api/v1/wallet/channel/exit-user
+   */
+  static async exitUserChannel(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { userChannelId, userPrivateKey, hubPrivateKey } = req.body;
+
+      if (!userChannelId || !userPrivateKey || !hubPrivateKey) {
+        const appError: AppError = new Error('userChannelId, userPrivateKey, and hubPrivateKey are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.exitUserChannel(
+        userChannelId,
+        userPrivateKey,
+        hubPrivateKey
+      );
+      
+      res.json({
+        success: true,
+        message: `User channel exited successfully. ${result.commitmentsSettled} commitments settled.`,
+        ...result,
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to exit user channel');
       appError.statusCode = 500;
       next(appError);
     }

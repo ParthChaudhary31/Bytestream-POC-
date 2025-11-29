@@ -35,6 +35,7 @@ router.post('/hub/ledger/clear', WalletController.clearHubLedger);
 router.post('/channel/unilateral-exit', WalletController.unilateralExit);
 router.get('/channel/:channelId/watchtower', WalletController.watchtowerCheck);
 router.post('/channel/competing-remedy', WalletController.competingRemedy);
+router.post('/channel/exit-user', WalletController.exitUserChannel);
 
 export default router;
 

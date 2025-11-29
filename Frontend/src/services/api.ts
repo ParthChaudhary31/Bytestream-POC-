@@ -433,6 +433,39 @@ class ApiService {
       }
     );
   }
+
+  async exitUserChannel(
+    userChannelId: string,
+    userPrivateKey: string,
+    hubPrivateKey: string
+  ) {
+    return this.request<{
+      success: boolean;
+      message: string;
+      exitTxid: string;
+      totalAmount: number;
+      commitmentsSettled: number;
+      channelState: {
+        channelId: string;
+        taprootAddress: string;
+        userAddress: string;
+        hubAddress: string;
+        userBalance: number;
+        hubBalance: number;
+        l1Balance?: number;
+        capacity: number;
+        status: 'opening' | 'open' | 'closing' | 'closed';
+        commitmentNumber: number;
+        closingTxid?: string;
+      };
+    }>(
+      '/wallet/channel/exit-user',
+      {
+        method: 'POST',
+        body: JSON.stringify({ userChannelId, userPrivateKey, hubPrivateKey }),
+      }
+    );
+  }
 }
 
 export const apiService = new ApiService();

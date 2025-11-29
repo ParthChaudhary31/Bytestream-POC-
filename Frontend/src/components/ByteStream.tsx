@@ -1076,11 +1076,12 @@ export function ByteStream() {
                             ? `${formatSats(channel.l1Balance)} sats`
                             : 'Loading...'}
                         </p>
-                        {channel.l1Balance !== undefined && channel.hubBalance !== 0 && (
-                          <p className="text-[#888] text-xs mt-1">
-                            Withdrawable: {formatSats(Math.max(0, channel.l1Balance - channel.hubBalance))} sats
-                          </p>
-                        )}
+                      {channel.l1Balance !== undefined && (
+                        <p className="text-[#888] text-xs mt-1">
+                          Withdrawable: ~{formatSats(Math.max(0, channel.l1Balance - channel.hubBalance - 200))} sats
+                          <span className="text-[#888] text-xs ml-1">(approx, fee deducted)</span>
+                        </p>
+                      )}
                       </div>
                       <div>
                         <p className="text-[#888] text-xs mb-1">
