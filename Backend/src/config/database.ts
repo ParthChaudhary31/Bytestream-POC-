@@ -92,9 +92,16 @@ export const initializeModels = async (): Promise<void> => {
   } catch (error: any) {
     if (error.message?.includes('Too many keys') || error.original?.code === 'ER_TOO_MANY_KEYS') {
       console.warn('⚠️  Too many indexes detected. Skipping table alterations.');
-      console.warn('   Run fix_taproot_indexes.sql to clean up indexes, or use { force: false, alter: false }');
+      console.warn('   Run "npm run fix:indexes" to clean up indexes.');
+      console.warn('   Or run: ts-node fix_taproot_indexes.ts');
       // Continue without altering - tables will work if they already exist
-      await sequelize.sync({ alter: false });
+      try {
+        await sequelize.sync({ alter: false });
+      } catch (syncError: any) {
+        // If even sync without alter fails, just log and continue
+        console.warn('⚠️  Could not sync database. Tables may need manual cleanup.');
+        console.warn('   Error:', syncError.message);
+      }
     } else {
       throw error;
     }

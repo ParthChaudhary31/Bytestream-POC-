@@ -89,6 +89,13 @@ export class WalletService {
   }
 
   /**
+   * Get public key for an address
+   */
+  static getPublicKey(address: string): string | undefined {
+    return addressToPublicKeyMap.get(address);
+  }
+
+  /**
    * Create a Taproot multisig address
    * Accepts either addresses or public keys
    * If public keys are provided, they will be used directly
@@ -151,7 +158,7 @@ export class WalletService {
       // Leaf 2: User Key + 144 CSV
       // <144> CSV DROP <pk1> CHECKSIG
       const scriptUser = Buffer.from(bitcoin.script.compile([
-        bitcoin.script.number.encode(144),
+        bitcoin.script.number.encode(1),
         bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
         bitcoin.opcodes.OP_DROP,
         pk1,

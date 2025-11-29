@@ -1,0 +1,83 @@
+{
+  "name": "Bytestream Payment Channel Tests",
+  "description": "Test suite for Bytestream L2 payment channel system with UTXO creation",
+  "baseUrl": "http://localhost:3001/api/v1/wallet",
+  "timeout": 30000,
+  "network": "testnet",
+  "testSuites": [
+    {
+      "name": "Channel Flow Test",
+      "file": "test-channel-flow.ts",
+      "description": "Tests complete channel lifecycle: opening, funding, payments, and exit"
+    },
+    {
+      "name": "UTXO Creation Test",
+      "file": "test-utxo-creation.ts",
+      "description": "Tests UTXO creation when user exits with multiple commitments"
+    }
+  ],
+  "endpoints": {
+    "generateWallet": {
+      "method": "GET",
+      "path": "/generate-wallet"
+    },
+    "openChannel": {
+      "method": "POST",
+      "path": "/channel/open",
+      "body": {
+        "userAddress": "string",
+        "capacity": "number",
+        "userPublicKey": "string"
+      }
+    },
+    "confirmFunding": {
+      "method": "POST",
+      "path": "/channel/confirm-funding",
+      "body": {
+        "channelId": "string",
+        "fundingTxid": "string",
+        "userBalance": "number",
+        "hubBalance": "number"
+      }
+    },
+    "routingPayment": {
+      "method": "POST",
+      "path": "/channel/routing-payment",
+      "body": {
+        "senderAddress": "string",
+        "recipients": [
+          {
+            "userAddress": "string",
+            "amount": "number"
+          }
+        ]
+      }
+    },
+    "exitUserChannel": {
+      "method": "POST",
+      "path": "/channel/exit-user",
+      "body": {
+        "userChannelId": "string",
+        "userPrivateKey": "string",
+        "hubPrivateKey": "string"
+      }
+    }
+  },
+  "environment": {
+    "required": [
+      "HUB_ADDRESS",
+      "HUB_PRIVATE_KEY"
+    ],
+    "optional": [
+      "PORT",
+      "DATABASE_URL"
+    ]
+  },
+  "verification": {
+    "testnetExplorer": "https://mempool.space/testnet",
+    "checkTransactions": true,
+    "waitForConfirmation": true,
+    "maxWaitTime": 60000
+  }
+}
+

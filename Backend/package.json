@@ -13,7 +13,11 @@
     "server": "NODE_ENV=development nodemon --exec ts-node src/server.ts",
     "server:prod": "NODE_ENV=production npm run build && node dist/server.js",
     "build": "tsc",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "ts-node tests/run-all-tests.ts",
+    "test:flow": "ts-node tests/test-channel-flow.ts",
+    "test:utxo": "ts-node tests/test-utxo-creation.ts",
+    "test:all": "ts-node tests/run-all-tests.ts",
+    "fix:indexes": "ts-node fix_taproot_indexes.ts"
   },
   "keywords": [],
   "author": "",

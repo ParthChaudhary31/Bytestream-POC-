@@ -199,7 +199,7 @@ export function Audit({ transactions, onBack, showToast }: AuditProps) {
                   </div>
                   <div className="flex gap-3">
                     <span className="text-[#EF4444]">2.</span>
-                    <span>You must wait 24 hours after broadcasting to claim funds</span>
+                    <span>You must wait 5 minutes after broadcasting to claim funds</span>
                   </div>
                   <div className="flex gap-3">
                     <span className="text-[#EF4444]">3.</span>

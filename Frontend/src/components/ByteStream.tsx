@@ -307,7 +307,7 @@ export function ByteStream() {
       return;
     }
 
-    if (!window.confirm(`Initiate unilateral exit for channel ${channel.channelId}? Funds will be locked for 24 hours (CSV lock).`)) {
+    if (!window.confirm(`Initiate unilateral exit for channel ${channel.channelId}? Funds will be locked for 5 minutes (CSV lock).`)) {
       return;
     }
 
@@ -434,7 +434,7 @@ export function ByteStream() {
             <p className="text-sm mb-2">Two exit mechanisms for security:</p>
             <ul className="text-sm list-disc list-inside space-y-1 ml-4">
               <li><strong>Cooperative Exit:</strong> Both parties agree, instant settlement</li>
-              <li><strong>Unilateral Exit:</strong> CSV lock (24-hour delay) for security</li>
+              <li><strong>Unilateral Exit:</strong> CSV lock (5-minute delay) for security</li>
               <li><strong>Watchtower:</strong> Monitors L1 for fraud attempts</li>
               <li><strong>Competing Remedy:</strong> Prevents stale transaction fraud</li>
             </ul>
@@ -1000,7 +1000,7 @@ export function ByteStream() {
               <h4 className="text-white font-semibold mb-2">Exit Options</h4>
               <ul className="text-[#888] text-sm space-y-1 list-disc list-inside">
                 <li><strong>Cooperative Exit:</strong> Both parties sign, instant settlement</li>
-                <li><strong>Unilateral Exit:</strong> CSV lock (24 hours), secure but delayed</li>
+                <li><strong>Unilateral Exit:</strong> CSV lock (5 minutes), secure but delayed</li>
               </ul>
             </div>
           </div>

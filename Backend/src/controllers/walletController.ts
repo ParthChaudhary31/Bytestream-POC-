@@ -848,7 +848,7 @@ export class WalletController {
       
       res.json({
         success: true,
-        message: `User channel exited successfully. ${result.commitmentsSettled} commitments settled.`,
+        message: `User channel exited successfully. ${result.commitmentsSettled} commitments settled. ${result.commitmentUtxos.length} UTXOs created and broadcast to testnet.`,
         ...result,
       });
     } catch (error) {
