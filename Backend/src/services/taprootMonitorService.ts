@@ -255,7 +255,7 @@ export class TaprootMonitorService {
     const totalAccounts = this.accounts.size;
     console.log(`\n${'='.repeat(80)}`);
     console.log(`🔍 [${timestamp}] Checking balances for ${totalAccounts} taproot account(s)...`);
-    console.log(`⚡ Processing with concurrency: ${concurrency} accounts at a time`);
+    console.log(`⚡ Processing with concurrency: ${concurrencyLimit} accounts at a time`);
     console.log(`${'='.repeat(80)}`);
 
     const addresses = Array.from(this.accounts.keys());

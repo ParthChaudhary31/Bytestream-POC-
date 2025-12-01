@@ -727,6 +727,20 @@ export class ChannelService {
       console.warn(`Failed to fetch L1 balance for new channel: ${error.message}`);
     }
 
+    // Register taproot address for automatic balance monitoring
+    try {
+      const { TaprootMonitorService } = await import('./taprootMonitorService');
+      await TaprootMonitorService.registerTaprootAccount(
+        channel.taprootAddress,
+        userAddress,
+        hubAddress
+      );
+      console.log(`✅ Registered taproot address for monitoring: ${channel.taprootAddress}`);
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to register taproot address for monitoring: ${error.message}`);
+      // Continue even if registration fails - not critical for channel opening
+    }
+
     return {
       channelId: channel.channelId,
       taprootAddress: channel.taprootAddress,
