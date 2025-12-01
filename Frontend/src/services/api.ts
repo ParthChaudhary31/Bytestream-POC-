@@ -396,6 +396,35 @@ class ApiService {
     });
   }
 
+  async closeChannel(
+    channelId: string,
+    userPrivateKey: string,
+    hubPrivateKey?: string // Optional - backend will use .env if not provided
+  ) {
+    return this.request<{
+      closingTxid: string;
+      channelState: {
+        channelId: string;
+        taprootAddress: string;
+        userAddress: string;
+        hubAddress: string;
+        userBalance: number;
+        hubBalance: number;
+        l1Balance?: number;
+        capacity: number;
+        status: 'opening' | 'open' | 'closing' | 'closed';
+        commitmentNumber: number;
+        closingTxid?: string;
+      };
+    }>(
+      '/wallet/channel/close',
+      {
+        method: 'POST',
+        body: JSON.stringify({ channelId, userPrivateKey, hubPrivateKey }),
+      }
+    );
+  }
+
   async unilateralExit(channelId: string, userPrivateKey: string) {
     return this.request<{
       exitTxid: string;
@@ -437,7 +466,7 @@ class ApiService {
   async exitUserChannel(
     userChannelId: string,
     userPrivateKey: string,
-    hubPrivateKey: string
+    hubPrivateKey?: string // Optional - backend will use .env if not provided
   ) {
     return this.request<{
       success: boolean;
@@ -445,6 +474,11 @@ class ApiService {
       exitTxid: string;
       totalAmount: number;
       commitmentsSettled: number;
+      commitmentUtxos?: Array<{
+        commitmentId: string;
+        utxoTxid: string;
+        utxoVout: number;
+      }>;
       channelState: {
         channelId: string;
         taprootAddress: string;

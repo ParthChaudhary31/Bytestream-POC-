@@ -109,3 +109,10 @@ if (require.main === module) {
 
 export { fixTaprootIndexes };
 
+
+
+
+
+
+
+

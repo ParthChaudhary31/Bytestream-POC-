@@ -5,6 +5,7 @@ import { TaprootMonitorService } from '../services/taprootMonitorService';
 import { BalanceService } from '../services/balanceService';
 import { ChannelService } from '../services/channelService';
 import { BalanceEvent, TaprootAccount } from '../models';
+import { config } from '../config/env';
 
 export class WalletController {
   /**
@@ -526,13 +527,21 @@ export class WalletController {
     try {
       const { channelId, userPrivateKey, hubPrivateKey } = req.body;
 
-      if (!channelId || !userPrivateKey || !hubPrivateKey) {
-        const appError: AppError = new Error('channelId, userPrivateKey, and hubPrivateKey are required');
+      if (!channelId || !userPrivateKey) {
+        const appError: AppError = new Error('channelId and userPrivateKey are required');
         appError.statusCode = 400;
         return next(appError);
       }
 
-      const result = await ChannelService.closeChannel(channelId, userPrivateKey, hubPrivateKey);
+      // Use hubPrivateKey from request, or fallback to config (from .env)
+      const finalHubPrivateKey = hubPrivateKey || config.hubPrivateKey;
+      if (!finalHubPrivateKey) {
+        const appError: AppError = new Error('Hub private key is required. Either provide hubPrivateKey in request or set HUB_PRIVATE_KEY in environment variables.');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.closeChannel(channelId, userPrivateKey, finalHubPrivateKey);
       res.json(result);
     } catch (error) {
       const appError: AppError = error instanceof Error
@@ -792,7 +801,8 @@ export class WalletController {
   }
 
   /**
-   * Competing Remedy Transaction
+   * Competing Remedy Transaction (R1 Transaction)
+   * Hub broadcasts latest commitment to compete with stale U1 transaction
    * POST /api/v1/wallet/channel/competing-remedy
    */
   static async competingRemedy(
@@ -801,7 +811,7 @@ export class WalletController {
     next: NextFunction
   ) {
     try {
-      const { channelId, staleCommitmentNumber } = req.body;
+      const { channelId, staleCommitmentNumber, hubPrivateKey } = req.body;
 
       if (!channelId || staleCommitmentNumber === undefined) {
         const appError: AppError = new Error('channelId and staleCommitmentNumber are required');
@@ -809,7 +819,7 @@ export class WalletController {
         return next(appError);
       }
 
-      const result = await ChannelService.competingRemedy(channelId, staleCommitmentNumber);
+      const result = await ChannelService.competingRemedy(channelId, staleCommitmentNumber, hubPrivateKey);
       res.json(result);
     } catch (error) {
       const appError: AppError = error instanceof Error
@@ -834,8 +844,16 @@ export class WalletController {
     try {
       const { userChannelId, userPrivateKey, hubPrivateKey } = req.body;
 
-      if (!userChannelId || !userPrivateKey || !hubPrivateKey) {
-        const appError: AppError = new Error('userChannelId, userPrivateKey, and hubPrivateKey are required');
+      if (!userChannelId || !userPrivateKey) {
+        const appError: AppError = new Error('userChannelId and userPrivateKey are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      // Use hubPrivateKey from request, or fallback to config (from .env)
+      const finalHubPrivateKey = hubPrivateKey || config.hubPrivateKey;
+      if (!finalHubPrivateKey) {
+        const appError: AppError = new Error('Hub private key is required. Either provide hubPrivateKey in request or set HUB_PRIVATE_KEY in environment variables.');
         appError.statusCode = 400;
         return next(appError);
       }
@@ -843,18 +861,56 @@ export class WalletController {
       const result = await ChannelService.exitUserChannel(
         userChannelId,
         userPrivateKey,
-        hubPrivateKey
+        finalHubPrivateKey
       );
       
       res.json({
         success: true,
-        message: `User channel exited successfully. ${result.commitmentsSettled} commitments settled. ${result.commitmentUtxos.length} UTXOs created and broadcast to testnet.`,
+        message: `User channel exited successfully. ${result.commitmentsSettled} commitments settled. ${result.commitmentUtxos.length} UTXOs created and broadcast to ${config.bitcoinNetwork}.`,
         ...result,
       });
     } catch (error) {
       const appError: AppError = error instanceof Error
         ? error
         : new Error('Failed to exit user channel');
+      appError.statusCode = 500;
+      next(appError);
+    }
+  }
+
+  /**
+   * Broadcast Commitment Transaction to L1
+   * Allows broadcasting commitment transaction even if channel is in closing status
+   * POST /api/v1/wallet/channel/broadcast-commitment
+   */
+  static async broadcastCommitment(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const { channelId, userPrivateKey, hubPrivateKey } = req.body;
+
+      if (!channelId || !userPrivateKey || !hubPrivateKey) {
+        const appError: AppError = new Error('channelId, userPrivateKey, and hubPrivateKey are required');
+        appError.statusCode = 400;
+        return next(appError);
+      }
+
+      const result = await ChannelService.broadcastCommitmentTransaction(
+        channelId,
+        userPrivateKey,
+        hubPrivateKey
+      );
+      
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof Error
+        ? error
+        : new Error('Failed to broadcast commitment transaction');
       appError.statusCode = 500;
       next(appError);
     }

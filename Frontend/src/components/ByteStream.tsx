@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Card } from './ui/card';
@@ -98,6 +98,9 @@ export function ByteStream() {
 
   // Unilateral exit
   const [exitingChannelId, setExitingChannelId] = useState<string | null>(null);
+  
+  // Exit with UTXO creation (for commitments)
+  const [exitingWithUtxosChannelId, setExitingWithUtxosChannelId] = useState<string | null>(null);
 
   // Wallet generation
   const [showWalletGenerator, setShowWalletGenerator] = useState(false);
@@ -149,7 +152,12 @@ export function ByteStream() {
     try {
       // Always sync on load to get fresh data
       const response = await apiService.getHubLedger(sync);
-      setHubLedger(response.ledger || []);
+      // Convert lastUpdated from string to Date
+      const ledgerWithDates = (response.ledger || []).map(entry => ({
+        ...entry,
+        lastUpdated: new Date(entry.lastUpdated)
+      }));
+      setHubLedger(ledgerWithDates);
       if (sync) {
         console.log('Hub ledger synced with current channel states');
       }
@@ -165,7 +173,12 @@ export function ByteStream() {
   const handleSyncHubLedger = async () => {
     try {
       const response = await apiService.syncHubLedger();
-      setHubLedger(response.ledger || []);
+      // Convert lastUpdated from string to Date
+      const ledgerWithDates = (response.ledger || []).map(entry => ({
+        ...entry,
+        lastUpdated: new Date(entry.lastUpdated)
+      }));
+      setHubLedger(ledgerWithDates);
       alert('Hub ledger synced successfully!');
     } catch (error: any) {
       console.error('Failed to sync hub ledger:', error);
@@ -307,7 +320,7 @@ export function ByteStream() {
       return;
     }
 
-    if (!window.confirm(`Initiate unilateral exit for channel ${channel.channelId}? Funds will be locked for 5 minutes (CSV lock).`)) {
+    if (!window.confirm(`Initiate unilateral exit for channel ${channel.channelId}? Funds will be locked for 144 blocks (≈24 hours) due to CSV lock.`)) {
       return;
     }
 
@@ -321,6 +334,67 @@ export function ByteStream() {
       alert(`Failed to initiate unilateral exit: ${error.message || 'Unknown error'}`);
     } finally {
       setExitingChannelId(null);
+    }
+  };
+
+  const handleCloseChannel = async (channel: ChannelState) => {
+    if (!selectedUser?.keys?.privateKey) {
+      alert('Private key is required for closing channel');
+      return;
+    }
+
+    // Hub private key can come from Redux store OR backend will use .env
+    // If not in Redux, backend will use HUB_PRIVATE_KEY from .env
+    const hubPrivateKey = hubKeys?.privateKey || undefined; // undefined = backend will use .env
+
+    if (!window.confirm(`Close channel ${channel.channelId} cooperatively?\n\nThis will:\n- Hub signs latest transaction\n- Broadcast to testnet\n- Settle funds on L1\n\nContinue?`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await apiService.closeChannel(
+        channel.channelId,
+        selectedUser.keys.privateKey,
+        hubPrivateKey // Can be undefined, backend will use .env
+      );
+      alert(`Channel closed cooperatively!\n\nClosing TXID: ${result.closingTxid}\n\nView on testnet: https://mempool.space/testnet/tx/${result.closingTxid}`);
+      await loadChannels();
+      await loadAllChannels();
+    } catch (error: any) {
+      alert(`Failed to close channel: ${error.message || 'Unknown error'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExitWithUtxos = async (channel: ChannelState) => {
+    if (!selectedUser?.keys?.privateKey) {
+      alert('Private key is required for exit');
+      return;
+    }
+
+    // Hub private key can come from Redux store OR backend will use .env
+    const hubPrivateKey = hubKeys?.privateKey || undefined; // undefined = backend will use .env
+
+    if (!window.confirm(`Exit channel ${channel.channelId}?\n\nThis will:\n- Settle your TOTAL balance in ONE transaction (Latest Commitment)\n- Close the channel\n\nContinue?`)) {
+      return;
+    }
+
+    setExitingWithUtxosChannelId(channel.channelId);
+    try {
+      const result = await apiService.exitUserChannel(
+        channel.channelId,
+        selectedUser.keys.privateKey,
+        hubPrivateKey // Can be undefined, backend will use .env
+      );
+      alert(`Channel exit successful!\n\nExit TXID: ${result.exitTxid}\nTotal Amount: ${result.totalAmount} sats\n\nChannel closed with single commitment transaction.`);
+      await loadChannels();
+      await loadAllChannels();
+    } catch (error: any) {
+      alert(`Failed to exit channel: ${error.message || 'Unknown error'}`);
+    } finally {
+      setExitingWithUtxosChannelId(null);
     }
   };
 
@@ -1121,7 +1195,79 @@ export function ByteStream() {
                         <Copy className="h-4 w-4" />
                       )}
                     </Button>
+                    <Button
+                      onClick={() => window.open(`https://mempool.space/testnet/address/${channel.taprootAddress}`, '_blank')}
+                      size="sm"
+                      className="bg-[#3B82F6] hover:bg-[#3B82F6]/90 text-white"
+                      title="View on Testnet Explorer"
+                    >
+                      🔗 L1
+                    </Button>
                   </div>
+                </div>
+
+                {/* L1 Transactions Display */}
+                <div className="mb-4 space-y-2">
+                  {channel.fundingTxid && (
+                    <div className="bg-[#0A0A0A] border border-[#2C2C2C] p-2 rounded">
+                      <p className="text-[#888] text-xs mb-1">Funding Transaction (L1)</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-mono text-xs flex-1 truncate">
+                          {channel.fundingTxid.slice(0, 16)}...{channel.fundingTxid.slice(-8)}
+                        </span>
+                        <Button
+                          onClick={() => window.open(`https://mempool.space/testnet/tx/${channel.fundingTxid}`, '_blank')}
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-xs"
+                        >
+                          View
+                        </Button>
+                        <Button
+                          onClick={() => channel.fundingTxid && handleCopy(channel.fundingTxid, `funding-${channel.channelId}`)}
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0"
+                        >
+                          {copied === `funding-${channel.channelId}` ? (
+                            <CheckCircle2 className="h-3 w-3 text-[#10B981]" />
+                          ) : (
+                            <Copy className="h-3 w-3 text-[#888]" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {channel.closingTxid && (
+                    <div className="bg-[#0A0A0A] border border-[#2C2C2C] p-2 rounded">
+                      <p className="text-[#888] text-xs mb-1">Closing Transaction (L1)</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-mono text-xs flex-1 truncate">
+                          {channel.closingTxid.slice(0, 16)}...{channel.closingTxid.slice(-8)}
+                        </span>
+                        <Button
+                          onClick={() => window.open(`https://mempool.space/testnet/tx/${channel.closingTxid}`, '_blank')}
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-xs"
+                        >
+                          View
+                        </Button>
+                        <Button
+                          onClick={() => channel.closingTxid && handleCopy(channel.closingTxid, `closing-${channel.channelId}`)}
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0"
+                        >
+                          {copied === `closing-${channel.channelId}` ? (
+                            <CheckCircle2 className="h-3 w-3 text-[#10B981]" />
+                          ) : (
+                            <Copy className="h-3 w-3 text-[#888]" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 flex-wrap">
@@ -1152,12 +1298,31 @@ export function ByteStream() {
                             Route Payment
                           </Button>
                           <Button
+                            onClick={() => handleCloseChannel(channel)}
+                            disabled={loading || (showAllChannels && channel.userAddress !== selectedUser?.keys?.address)}
+                            className="bg-[#10B981] hover:bg-[#10B981]/90 text-white"
+                            size="sm"
+                            title="Cooperative Exit (Step 4) - Hub signs latest tx, broadcasts to L1"
+                          >
+                            {loading ? 'Closing...' : 'Close Channel'}
+                          </Button>
+                          <Button
                             onClick={() => handleUnilateralExit(channel)}
                             disabled={exitingChannelId === channel.channelId || (showAllChannels && channel.userAddress !== selectedUser?.keys?.address)}
                             className="bg-[#EF4444] hover:bg-[#EF4444]/90 text-white"
                             size="sm"
+                            title="Unilateral Exit (Step 5) - CSV lock (144 blocks ≈ 24 hours)"
                           >
                             {exitingChannelId === channel.channelId ? 'Exiting...' : 'Unilateral Exit'}
+                          </Button>
+                          <Button
+                            onClick={() => handleExitWithUtxos(channel)}
+                            disabled={exitingWithUtxosChannelId === channel.channelId || (showAllChannels && channel.userAddress !== selectedUser?.keys?.address)}
+                            className="bg-[#8B5CF6] hover:bg-[#8B5CF6]/90 text-white"
+                            size="sm"
+                            title="Extra Feature: Exit with UTXO creation (NOT in diagram - creates UTXOs for commitments)"
+                          >
+                            {exitingWithUtxosChannelId === channel.channelId ? 'Exiting...' : 'Exit (UTXOs)'}
                           </Button>
                         </>
                       )}

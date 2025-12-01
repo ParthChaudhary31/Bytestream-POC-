@@ -33,6 +33,9 @@ export const config = {
   // ByteStream Hub Configuration
   hubAddress: process.env.HUB_ADDRESS || '',
   hubPrivateKey: process.env.HUB_PRIVATE_KEY || '',
+  
+  // Bitcoin Network Configuration
+  bitcoinNetwork: (process.env.BITCOIN_NETWORK || 'testnet') as 'testnet' | 'mainnet',
 };
 
 // Validate Hub configuration at startup

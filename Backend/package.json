@@ -37,6 +37,7 @@
     "express": "^5.1.0",
     "mysql2": "^3.15.3",
     "node-cron": "^4.2.1",
+    "notion": "^0.0.1",
     "sequelize": "^6.37.7",
     "tiny-secp256k1": "^2.2.4",
     "wif": "^5.0.0"

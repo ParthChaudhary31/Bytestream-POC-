@@ -170,6 +170,55 @@ export interface HubLedgerEntry {
  */
 export class ChannelService {
   /**
+   * Get Bitcoin network based on configuration
+   */
+  private static getNetwork(): bitcoin.Network {
+    return config.bitcoinNetwork === 'mainnet' 
+      ? bitcoin.networks.bitcoin 
+      : bitcoin.networks.testnet;
+  }
+
+  /**
+   * Get network string ('testnet' or 'mainnet')
+   */
+  private static getNetworkString(): 'testnet' | 'mainnet' {
+    return config.bitcoinNetwork;
+  }
+
+  /**
+   * Get mempool.space API base URL based on network
+   */
+  private static getMempoolApiBase(): string {
+    return config.bitcoinNetwork === 'mainnet'
+      ? 'https://mempool.space/api'
+      : 'https://mempool.space/testnet/api';
+  }
+
+  /**
+   * Get mempool.space transaction broadcast URL
+   */
+  private static getMempoolBroadcastUrl(): string {
+    return `${this.getMempoolApiBase()}/tx`;
+  }
+
+  /**
+   * Get mempool.space fees API URL
+   */
+  private static getMempoolFeesUrl(): string {
+    return `${this.getMempoolApiBase()}/v1/fees/recommended`;
+  }
+
+  /**
+   * Get mempool.space transaction explorer URL
+   */
+  private static getMempoolTxUrl(txid: string): string {
+    const base = config.bitcoinNetwork === 'mainnet'
+      ? 'https://mempool.space/tx'
+      : 'https://mempool.space/testnet/tx';
+    return `${base}/${txid}`;
+  }
+
+  /**
    * Generate unique channel ID
    */
   static generateChannelId(userAddress: string, hubAddress: string): string {
@@ -196,13 +245,14 @@ export class ChannelService {
     }
 
     try {
-      const network = bitcoin.networks.testnet;
+      const network = this.getNetwork();
       
       // Get UTXO for channel taproot address
-      const utxos = await BalanceService.getUTXO(channel.taprootAddress, 'testnet');
+      const utxos = await BalanceService.getUTXO(channel.taprootAddress, this.getNetworkString());
       if (!utxos || utxos.length === 0) {
-        console.warn(`No UTXOs found for channel ${channel.channelId} at ${channel.taprootAddress}`);
-        return null;
+        const errorMsg = `No UTXOs found for channel ${channel.channelId} at ${channel.taprootAddress}. Please ensure the channel is funded on L1.`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
       }
 
       // Use the first (largest) UTXO - in real Lightning, this would be the funding transaction output
@@ -219,7 +269,7 @@ export class ChannelService {
       // Get fee rate
       let feeRate = 7.5; // Default
       try {
-        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        const { data: fees } = await axios.get(this.getMempoolFeesUrl());
         feeRate = fees.fastestFee;
       } catch (error) {
         console.warn('Failed to fetch fee rates, using default:', feeRate);
@@ -229,8 +279,18 @@ export class ChannelService {
       const psbt = new bitcoin.Psbt({ network });
 
       // Derive keys
-      const userKey = ECPair.fromWIF(userPrivateKey, network);
-      const hubKey = ECPair.fromWIF(hubPrivateKey, network);
+      let userKey, hubKey;
+      try {
+        userKey = ECPair.fromWIF(userPrivateKey, network);
+      } catch (error: any) {
+        throw new Error(`Invalid user private key format: ${error.message}`);
+      }
+      
+      try {
+        hubKey = ECPair.fromWIF(hubPrivateKey, network);
+      } catch (error: any) {
+        throw new Error(`Invalid hub private key format: ${error.message}`);
+      }
 
       // Reconstruct taproot script (same as in WalletService)
       const toXOnly = (pubKey: Buffer) => pubKey.length === 32 ? pubKey : pubKey.subarray(1, 33);
@@ -301,35 +361,76 @@ export class ChannelService {
       // Add outputs
       // Output 1: User's address (userBalance - fee)
       // Fee is paid by user since they are initiating the exit
-      const userAddress = bitcoin.address.toOutputScript(channel.userAddress, network);
+      let userAddress, hubAddress;
+      try {
+        userAddress = bitcoin.address.toOutputScript(channel.userAddress, network);
+      } catch (error: any) {
+        throw new Error(`Invalid user address format: ${channel.userAddress}. Error: ${error.message}`);
+      }
+      
+      try {
+        hubAddress = bitcoin.address.toOutputScript(channel.hubAddress, network);
+      } catch (error: any) {
+        throw new Error(`Invalid hub address format: ${channel.hubAddress}. Error: ${error.message}`);
+      }
+      
       psbt.addOutput({
         script: userAddress,
         value: userOutput,
       });
 
       // Output 2: Hub's address (hubBalance - full amount, no fee deduction)
-      const hubAddress = bitcoin.address.toOutputScript(channel.hubAddress, network);
       psbt.addOutput({
         script: hubAddress,
         value: hubOutput,
       });
 
       // Sign with both keys
-      psbt.signAllInputs(userKey);
-      psbt.signAllInputs(hubKey);
+      try {
+        psbt.signAllInputs(userKey);
+      } catch (error: any) {
+        throw new Error(`Failed to sign with user key: ${error.message}`);
+      }
+      
+      try {
+        psbt.signAllInputs(hubKey);
+      } catch (error: any) {
+        throw new Error(`Failed to sign with hub key: ${error.message}`);
+      }
 
       // Finalize
-      psbt.finalizeAllInputs();
+      try {
+        psbt.finalizeAllInputs();
+      } catch (error: any) {
+        throw new Error(`Failed to finalize PSBT: ${error.message}`);
+      }
 
       // Extract transaction hex
-      const tx = psbt.extractTransaction();
-      const txHex = tx.toHex();
-
-      return txHex;
+      try {
+        const tx = psbt.extractTransaction();
+        const txHex = tx.toHex();
+        return txHex;
+      } catch (error: any) {
+        throw new Error(`Failed to extract transaction: ${error.message}`);
+      }
     } catch (error: any) {
-      console.error(`Error creating commitment transaction: ${error.message}`);
-      // Return null on error - will just store hash
-      return null;
+      console.error(`Error creating commitment transaction for channel ${channel.channelId}:`, error);
+      console.error(`Error details:`, {
+        message: error.message,
+        stack: error.stack,
+        channelId: channel.channelId,
+        taprootAddress: channel.taprootAddress,
+        userBalance,
+        hubBalance,
+        hasUserKey: !!userPrivateKey,
+        hasHubKey: !!hubPrivateKey,
+      });
+      // Re-throw error with more context instead of returning null
+      throw new Error(
+        `Failed to create commitment transaction: ${error.message}. ` +
+        `Channel: ${channel.channelId}, Taproot: ${channel.taprootAddress}, ` +
+        `User Balance: ${userBalance}, Hub Balance: ${hubBalance}`
+      );
     }
   }
 
@@ -358,11 +459,11 @@ export class ChannelService {
     }
 
     try {
-      const network = bitcoin.networks.testnet;
+      const network = this.getNetwork();
 
       // Get UTXOs for sender's taproot address
       // In multi-UTXO architecture, we can use any available UTXO from the taproot address
-      const utxos = await BalanceService.getUTXO(senderChannel.taprootAddress, 'testnet');
+      const utxos = await BalanceService.getUTXO(senderChannel.taprootAddress, this.getNetworkString());
       if (!utxos || utxos.length === 0) {
         console.warn(`No UTXOs found for channel ${senderChannel.channelId} at ${senderChannel.taprootAddress}`);
         return { commitmentId, txHex: null };
@@ -381,7 +482,7 @@ export class ChannelService {
       // Get fee rate
       let feeRate = 7.5; // Default
       try {
-        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        const { data: fees } = await axios.get(this.getMempoolFeesUrl());
         feeRate = fees.fastestFee;
       } catch (error) {
         console.warn('Failed to fetch fee rates, using default:', feeRate);
@@ -515,7 +616,7 @@ export class ChannelService {
     let derivedHubPublicKey = hubPublicKey;
     if (!derivedHubPublicKey && config.hubPrivateKey) {
       try {
-        const network = bitcoin.networks.testnet;
+        const network = this.getNetwork();
         const hubKey = ECPair.fromWIF(config.hubPrivateKey, network);
         // Convert public key to hex string
         const pubKeyBuffer = Buffer.from(hubKey.publicKey);
@@ -827,7 +928,7 @@ export class ChannelService {
     inputUtxo?: any // Optional: specific UTXO to use
   ): Promise<{ utxoTxid: string; utxoVout: number }> {
     try {
-      const network = bitcoin.networks.testnet;
+      const network = this.getNetwork();
 
       // Get UTXOs from recipient's taproot address (the exiting user's channel)
       let utxos;
@@ -836,7 +937,7 @@ export class ChannelService {
         utxos = [inputUtxo];
       } else {
         // Fetch UTXOs
-        utxos = await BalanceService.getUTXO(recipientChannel.taprootAddress, 'testnet');
+        utxos = await BalanceService.getUTXO(recipientChannel.taprootAddress, this.getNetworkString());
         if (!utxos || utxos.length === 0) {
           throw new Error(`No UTXOs found for recipient channel ${recipientChannel.channelId}`);
         }
@@ -854,7 +955,7 @@ export class ChannelService {
       // Get fee rate
       let feeRate = 7.5;
       try {
-        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        const { data: fees } = await axios.get(this.getMempoolFeesUrl());
         feeRate = fees.fastestFee;
       } catch (error) {
         console.warn('Failed to fetch fee rates, using default:', feeRate);
@@ -946,22 +1047,26 @@ export class ChannelService {
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
 
-      // Broadcast to testnet
+      // Broadcast using createTransaction API infrastructure
+      // This uses the same broadcast mechanism as createTransaction endpoint
       console.log(`[Commitment UTXO] Broadcasting transaction for commitment ${commitment.commitmentId} (${commitment.amount} sats)...`);
-      const broadcastRes = await axios.post(
-        'https://mempool.space/testnet/api/tx',
-        txHex,
-        {
-          headers: {
-            'Content-Type': 'text/plain',
-          },
-        }
+      console.log(`[Commitment UTXO] Using createTransaction API infrastructure for broadcast...`);
+      
+      const utxoTxid = await WalletService.createAndBroadcastTransaction(
+        recipientChannel.userAddress,
+        recipientChannel.hubAddress,
+        userPrivateKey,
+        hubPrivateKey,
+        undefined, // nonce
+        recipientChannel.taprootAddress,
+        txHex, // broadcastPayload - use pre-built transaction hex
+        recipientChannel.taprootAddress // multisigAddress
       );
-      const utxoTxid = broadcastRes.data;
+      
       const utxoVout = 0; // First output is the commitment UTXO
 
       console.log(`[Commitment UTXO] ✓ Transaction broadcast: ${utxoTxid}`);
-      console.log(`[Commitment UTXO]   View on testnet: https://mempool.space/testnet/tx/${utxoTxid}`);
+      console.log(`[Commitment UTXO]   View on ${this.getNetworkString()}: ${this.getMempoolTxUrl(utxoTxid)}`);
 
       return { utxoTxid, utxoVout };
     } catch (error: any) {
@@ -1041,106 +1146,30 @@ export class ChannelService {
       throw new Error(`Channel is not open. Current status: ${userChannel.status}`);
     }
 
-    // Find ALL payment commitments where this user is recipient
-    // These represent all payments this user received from different senders
-    let allCommitments: any[] = [];
+    console.log(`[Exit User Channel] User ${userChannel.userAddress.slice(0, 16)}... exiting`);
+    console.log(`  - Channel ID: ${userChannelId}`);
+    console.log(`  - Final Balance to Settle: ${userChannel.userBalance} sats`);
+
+    // Find ALL payment commitments where this user is recipient (for reporting only)
+    let totalCommitments = 0;
     try {
-      // Check if PaymentCommitment model is available
-      if (!PaymentCommitment) {
-        console.warn('PaymentCommitment model not available. No commitments to settle.');
-      } else {
-        const result = await PaymentCommitment.findAll({
+      if (PaymentCommitment) {
+        const count = await PaymentCommitment.count({
           where: {
             recipientChannelId: userChannelId,
             status: 'committed',
           },
         });
-        allCommitments = Array.isArray(result) ? result : [];
+        totalCommitments = count;
+        console.log(`  - Consolidating ${totalCommitments} off-chain commitments into single exit tx`);
       }
-    } catch (error: any) {
-      console.error('PaymentCommitment.findAll error:', error);
-      if (error.message?.includes('doesn\'t exist') || error.message?.includes('Unknown column')) {
-        console.warn('PaymentCommitment table may not exist yet. No commitments to settle.');
-      } else {
-        throw error;
-      }
+    } catch (error) {
+      console.warn('Could not count commitments, continuing...');
     }
 
-    const totalCommitments = allCommitments.length;
-    const totalAmount = userChannel.userBalance; // Channel balance already includes all received payments
-
-    console.log(`[Exit User Channel] User ${userChannel.userAddress.slice(0, 16)}... exiting`);
-    console.log(`  - Channel ID: ${userChannelId}`);
-    console.log(`  - Total commitments to settle: ${totalCommitments}`);
-    console.log(`  - Total amount to receive: ${totalAmount} sats`);
-
-    // Update channel status to closing
-    await userChannel.update({ status: 'closing' });
-
-    // STEP 1: Create and broadcast UTXOs for each commitment
-    const commitmentUtxos: Array<{ commitmentId: string; utxoTxid: string; utxoVout: number }> = [];
-    
-      if (allCommitments.length > 0 && PaymentCommitment) {
-      console.log(`[Exit User Channel] Creating UTXOs for ${allCommitments.length} commitments...`);
-      
-      // Get initial UTXOs from recipient's channel
-      let availableUtxos = await BalanceService.getUTXO(userChannel.taprootAddress, 'testnet');
-      if (!availableUtxos || availableUtxos.length === 0) {
-        console.warn(`[Exit User Channel] No UTXOs found for channel. Skipping UTXO creation.`);
-      } else {
-        // Create UTXOs one by one
-        for (const commitment of allCommitments) {
-          try {
-            // Refresh UTXOs to get latest (including change from previous transactions)
-            availableUtxos = await BalanceService.getUTXO(userChannel.taprootAddress, 'testnet');
-            if (!availableUtxos || availableUtxos.length === 0) {
-              console.warn(`[Exit User Channel] No more UTXOs available. Skipping remaining commitments.`);
-              break;
-            }
-
-            // Use first available UTXO
-            const inputUtxo = availableUtxos[0];
-
-            // Create and broadcast UTXO for this commitment
-            const utxoResult = await this.createAndBroadcastCommitmentUTXO(
-              commitment,
-              userChannel,
-              userPrivateKey,
-              hubPrivateKey,
-              inputUtxo // Pass specific UTXO to use
-            );
-
-            // Update commitment record with UTXO info
-            await commitment.update({
-              utxoTxid: utxoResult.utxoTxid,
-              utxoVout: utxoResult.utxoVout,
-              status: 'spent',
-            });
-
-            commitmentUtxos.push({
-              commitmentId: commitment.commitmentId,
-              utxoTxid: utxoResult.utxoTxid,
-              utxoVout: utxoResult.utxoVout,
-            });
-
-            console.log(`[Exit User Channel] ✓ Created UTXO for commitment ${commitment.commitmentId}: ${utxoResult.utxoTxid}:${utxoResult.utxoVout}`);
-            console.log(`[Exit User Channel]   View on testnet: https://mempool.space/testnet/tx/${utxoResult.utxoTxid}`);
-            
-            // Wait a bit before next transaction to avoid rate limiting and allow UTXO to be available
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          } catch (error: any) {
-            console.error(`[Exit User Channel] Failed to create UTXO for commitment ${commitment.commitmentId}: ${error.message}`);
-            // Continue with other commitments
-          }
-        }
-
-        console.log(`[Exit User Channel] Created ${commitmentUtxos.length} UTXOs out of ${allCommitments.length} commitments`);
-      }
-    }
-
-    // STEP 2: Close the channel - this creates ONE on-chain transaction
+    // STEP 1: Close the channel - this creates ONE on-chain transaction
     // The channel's userBalance already contains the sum of all payments received
-    console.log(`[Exit User Channel] Closing channel...`);
+    console.log(`[Exit User Channel] Closing channel with single commitment...`);
     const closeResult = await this.closeChannel(
       userChannelId,
       userPrivateKey,
@@ -1148,28 +1177,21 @@ export class ChannelService {
     );
 
     console.log(`[Exit User Channel] Channel closed. Exit transaction: ${closeResult.closingTxid}`);
-    console.log(`[Exit User Channel] View exit transaction: https://mempool.space/testnet/tx/${closeResult.closingTxid}`);
+    console.log(`[Exit User Channel] View exit transaction: ${this.getMempoolTxUrl(closeResult.closingTxid)}`);
 
-    // Mark any remaining commitments as spent (if not already updated)
-    if (allCommitments.length > 0 && PaymentCommitment) {
+    // STEP 2: Mark all commitments as spent/settled by this closing tx
+    if (PaymentCommitment) {
       try {
-        const remainingCommitments = allCommitments.filter(c => 
-          !commitmentUtxos.some(u => u.commitmentId === c.commitmentId)
+        await PaymentCommitment.update(
+          { status: 'spent', utxoTxid: closeResult.closingTxid },
+          {
+            where: {
+              recipientChannelId: userChannelId,
+              status: 'committed',
+            },
+          }
         );
-        
-        if (remainingCommitments.length > 0) {
-          await PaymentCommitment.update(
-            { status: 'spent', utxoTxid: closeResult.closingTxid },
-            {
-              where: {
-                recipientChannelId: userChannelId,
-                status: 'committed',
-                utxoTxid: null,
-              },
-            }
-          );
-          console.log(`[Exit User Channel] Marked ${remainingCommitments.length} remaining commitments as spent`);
-        }
+        console.log(`[Exit User Channel] Marked all commitments as settled via tx ${closeResult.closingTxid}`);
       } catch (error: any) {
         console.error('PaymentCommitment.update error:', error);
       }
@@ -1177,9 +1199,9 @@ export class ChannelService {
 
     return {
       exitTxid: closeResult.closingTxid,
-      totalAmount,
+      totalAmount: userChannel.userBalance,
       commitmentsSettled: totalCommitments,
-      commitmentUtxos,
+      commitmentUtxos: [], // No individual UTXOs anymore
       channelState: closeResult.channelState,
     };
   }
@@ -1266,12 +1288,12 @@ export class ChannelService {
     }
 
     try {
-      const network = bitcoin.networks.testnet;
+      const network = this.getNetwork();
 
       // Get the specific UTXO for this commitment
       // In a real implementation, you'd track the exact UTXO (txid, vout) from the commitment
       // For now, we'll find UTXOs at the taproot address and use one that matches the amount
-      const utxos = await BalanceService.getUTXO(senderChannel.taprootAddress, 'testnet');
+      const utxos = await BalanceService.getUTXO(senderChannel.taprootAddress, this.getNetworkString());
       if (!utxos || utxos.length === 0) {
         throw new Error(`No UTXOs found for commitment at ${senderChannel.taprootAddress}`);
       }
@@ -1287,7 +1309,7 @@ export class ChannelService {
       // Get fee rate
       let feeRate = 7.5;
       try {
-        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        const { data: fees } = await axios.get(this.getMempoolFeesUrl());
         feeRate = fees.fastestFee;
       } catch (error) {
         console.warn('Failed to fetch fee rates, using default:', feeRate);
@@ -1374,7 +1396,7 @@ export class ChannelService {
 
       // Broadcast transaction
       const broadcastRes = await axios.post(
-        'https://mempool.space/testnet/api/tx',
+        this.getMempoolBroadcastUrl(),
         txHex
       );
       const exitTxid = broadcastRes.data;
@@ -1394,6 +1416,109 @@ export class ChannelService {
       console.error(`Error exiting payment commitment: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Broadcast commitment transaction to L1
+   * This allows broadcasting stored commitment transaction even if channel is in closing status
+   * Useful when you want to broadcast a commitment without full channel exit
+   */
+  static async broadcastCommitmentTransaction(
+    channelId: string,
+    userPrivateKey: string,
+    hubPrivateKey: string
+  ): Promise<{ txid: string; message: string }> {
+    const channel = await PaymentChannel.findOne({ where: { channelId } });
+    
+    if (!channel) {
+      throw new Error('Channel not found');
+    }
+
+    // Allow broadcasting even if channel is closing or closed
+    if (channel.status === 'opening') {
+      throw new Error('Channel is still opening. Cannot broadcast commitment yet.');
+    }
+
+    let txid: string;
+
+    // If we have a stored commitment transaction, broadcast it
+    if (channel.lastCommitmentTxHex) {
+      try {
+        console.log(`[Broadcast Commitment] Broadcasting stored commitment transaction for channel ${channelId}...`);
+        const broadcastRes = await axios.post(
+          this.getMempoolBroadcastUrl(),
+          channel.lastCommitmentTxHex,
+          {
+            headers: {
+              'Content-Type': 'text/plain',
+            },
+          }
+        );
+        txid = broadcastRes.data;
+        console.log(`[Broadcast Commitment] ✓ Transaction broadcast: ${txid}`);
+        console.log(`[Broadcast Commitment]   View on ${this.getNetworkString()}: ${this.getMempoolTxUrl(txid)}`);
+      } catch (error: any) {
+        console.error(`[Broadcast Commitment] Failed to broadcast stored commitment: ${error.message}`);
+        // Fallback: create new commitment transaction and broadcast
+        console.log(`[Broadcast Commitment] Creating new commitment transaction...`);
+        const commitmentTxHex = await this.createCommitmentTransaction(
+          channel,
+          channel.userBalance,
+          channel.hubBalance,
+          userPrivateKey,
+          hubPrivateKey
+        );
+        
+        if (!commitmentTxHex) {
+          throw new Error('Failed to create commitment transaction');
+        }
+
+        const broadcastRes = await axios.post(
+          this.getMempoolBroadcastUrl(),
+          commitmentTxHex,
+          {
+            headers: {
+              'Content-Type': 'text/plain',
+            },
+          }
+        );
+        txid = broadcastRes.data;
+        console.log(`[Broadcast Commitment] ✓ New transaction broadcast: ${txid}`);
+        console.log(`[Broadcast Commitment]   View on ${this.getNetworkString()}: ${this.getMempoolTxUrl(txid)}`);
+      }
+    } else {
+      // No stored transaction, create new one
+      console.log(`[Broadcast Commitment] No stored commitment found. Creating new commitment transaction...`);
+      const commitmentTxHex = await this.createCommitmentTransaction(
+        channel,
+        channel.userBalance,
+        channel.hubBalance,
+        userPrivateKey,
+        hubPrivateKey
+      );
+      
+      if (!commitmentTxHex) {
+        throw new Error('Failed to create commitment transaction');
+      }
+
+      const broadcastRes = await axios.post(
+        this.getMempoolBroadcastUrl(),
+        commitmentTxHex,
+        {
+          headers: {
+            'Content-Type': 'text/plain',
+          },
+        }
+      );
+      txid = broadcastRes.data;
+      console.log(`[Broadcast Commitment] ✓ Transaction broadcast: ${txid}`);
+      console.log(`[Broadcast Commitment]   View on ${this.getNetworkString()}: ${this.getMempoolTxUrl(txid)}`);
+    }
+
+    return {
+      txid,
+      message: `Commitment transaction broadcast successfully to ${this.getNetworkString()}. TXID: ${txid}`,
+    };
   }
 
   /**
@@ -1426,24 +1551,47 @@ export class ChannelService {
       throw new Error(`Channel is not open. Current status: ${channel.status}`);
     }
 
-    // Update channel status to closing
-    await channel.update({ status: 'closing' });
+    // DON'T update status to 'closing' yet - wait until transaction is created
+    // This prevents channel from getting stuck in 'closing' state if transaction fails
 
     let closingTxid: string;
+    let commitmentTxHex: string | null = null;
 
-    // If we have a stored commitment transaction, broadcast it
-    if (channel.lastCommitmentTxHex) {
-      try {
-        // Broadcast the stored commitment transaction
-        const broadcastRes = await axios.post(
-          'https://mempool.space/testnet/api/tx',
-          channel.lastCommitmentTxHex
-        );
-        closingTxid = broadcastRes.data; // txid
-      } catch (error: any) {
-        console.error(`Failed to broadcast stored commitment: ${error.message}`);
-        // Fallback: create new commitment transaction and broadcast
-        const commitmentTxHex = await this.createCommitmentTransaction(
+    try {
+      // Step 1: Try to use stored commitment transaction first
+      if (channel.lastCommitmentTxHex) {
+        try {
+          // Broadcast the stored commitment transaction
+          const broadcastRes = await axios.post(
+            this.getMempoolBroadcastUrl(),
+            channel.lastCommitmentTxHex
+          );
+          closingTxid = broadcastRes.data; // txid
+          commitmentTxHex = channel.lastCommitmentTxHex;
+        } catch (error: any) {
+          console.error(`Failed to broadcast stored commitment: ${error.message}`);
+          // Fallback: create new commitment transaction and broadcast
+          commitmentTxHex = await this.createCommitmentTransaction(
+            channel,
+            channel.userBalance,
+            channel.hubBalance,
+            userPrivateKey,
+            hubPrivateKey
+          );
+          
+          if (!commitmentTxHex) {
+            throw new Error('Failed to create commitment transaction for closing');
+          }
+
+          const broadcastRes = await axios.post(
+            this.getMempoolBroadcastUrl(),
+            commitmentTxHex
+          );
+          closingTxid = broadcastRes.data;
+        }
+      } else {
+        // No stored transaction, create and broadcast new one
+        commitmentTxHex = await this.createCommitmentTransaction(
           channel,
           channel.userBalance,
           channel.hubBalance,
@@ -1456,37 +1604,41 @@ export class ChannelService {
         }
 
         const broadcastRes = await axios.post(
-          'https://mempool.space/testnet/api/tx',
+          this.getMempoolBroadcastUrl(),
           commitmentTxHex
         );
         closingTxid = broadcastRes.data;
       }
-    } else {
-      // No stored transaction, create and broadcast new one
-      const commitmentTxHex = await this.createCommitmentTransaction(
-        channel,
-        channel.userBalance,
-        channel.hubBalance,
-        userPrivateKey,
-        hubPrivateKey
-      );
+
+      // Step 2: Only update status AFTER successful transaction creation and broadcast
+      // Update channel status to closing first, then to closed
+      await channel.update({ status: 'closing' });
       
-      if (!commitmentTxHex) {
-        throw new Error('Failed to create commitment transaction for closing');
+      // Update channel to closed
+      await channel.update({
+        status: 'closed',
+        closingTxid,
+      });
+    } catch (error: any) {
+      // If anything fails, ensure channel stays in 'open' state
+      // Don't update status if transaction creation/broadcast failed
+      console.error(`Error closing channel ${channelId}:`, error);
+      
+      // Reload channel to get current state
+      const currentChannel = await PaymentChannel.findOne({ where: { channelId } });
+      if (currentChannel && currentChannel.status === 'closing') {
+        // Revert to 'open' if somehow got stuck in 'closing'
+        await currentChannel.update({ status: 'open' });
+        console.log(`Reverted channel ${channelId} status from 'closing' back to 'open'`);
       }
-
-      const broadcastRes = await axios.post(
-        'https://mempool.space/testnet/api/tx',
-        commitmentTxHex
+      
+      // Re-throw error with context
+      throw new Error(
+        `Failed to close channel: ${error.message}. ` +
+        `Channel ${channelId} remains in 'open' state. ` +
+        `Please check: UTXOs exist, private keys are valid, addresses are correct.`
       );
-      closingTxid = broadcastRes.data;
     }
-
-    // Update channel to closed
-    await channel.update({
-      status: 'closed',
-      closingTxid,
-    });
 
     // Reload to get updated state
     const updatedChannel = await PaymentChannel.findOne({ where: { channelId } });
@@ -1983,6 +2135,7 @@ export class ChannelService {
 
         // MULTI-UTXO ARCHITECTURE: Create separate payment commitment for this payment
         // Each payment gets its own UTXO that can be spent independently
+        // IMPORTANT: taprootAddress should be recipient's address because that's where the money is after payment
         const paymentCommitment = await PaymentCommitment.create({
           commitmentId: crypto
             .createHash('sha256')
@@ -1994,7 +2147,7 @@ export class ChannelService {
           senderAddress: senderAddress,
           recipientAddress: recipientData.channel.userAddress,
           amount: recipientData.amount,
-          taprootAddress: senderChannel.taprootAddress, // Same taproot address for all commitments
+          taprootAddress: recipientData.channel.taprootAddress, // Recipient's taproot address - where the money actually is
           status: 'committed',
           commitmentNumber: recipientCommitment.commitmentNumber,
         }, { transaction });
@@ -2457,18 +2610,19 @@ export class ChannelService {
       throw new Error('Channel must be open for unilateral exit');
     }
 
-    // CSV lock: 5 minutes delay (for testing/demo - production should be longer)
+    // CSV lock: 144 blocks delay (standard Lightning Network delay)
     // In Bitcoin, CSV uses relative time/block height
-    // 5 minutes ≈ 1 block in testnet (testnet blocks are ~10 min, but we use 1 block for demo)
-    const csvLockBlocks = 1; // 1 block = ~10 minutes in testnet, but we'll use it for 5 min demo
-    const csvLockMinutes = 5;
+    // For testnet: 144 blocks ≈ 24 hours (testnet blocks are ~10 min)
+    // For mainnet: 144 blocks ≈ 24 hours (mainnet blocks are ~10 min)
+    const csvLockBlocks = 144; // Standard Lightning Network delay
+    const csvLockMinutes = Math.ceil(csvLockBlocks * 10); // ~10 min per block
     const unlockTime = new Date(Date.now() + csvLockMinutes * 60 * 1000);
 
     // Update channel status
     await channel.update({ status: 'closing' });
 
     try {
-      const network = bitcoin.networks.testnet;
+      const network = this.getNetwork();
 
       console.log('Starting unilateral exit transaction...');
       
@@ -2523,7 +2677,7 @@ export class ChannelService {
 
       // Get UTXOs from taproot address
       console.log(`Fetching UTXOs for taproot address: ${channel.taprootAddress}`);
-      const utxos = await BalanceService.getUTXO(channel.taprootAddress, 'testnet');
+      const utxos = await BalanceService.getUTXO(channel.taprootAddress, this.getNetworkString());
       if (!utxos || utxos.length === 0) {
         throw new Error(`No UTXOs found for channel at ${channel.taprootAddress}`);
       }
@@ -2534,7 +2688,7 @@ export class ChannelService {
       console.log('Fetching fee rates...');
       let feeRate = 7.5; // Default
       try {
-        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        const { data: fees } = await axios.get(this.getMempoolFeesUrl());
         feeRate = fees.fastestFee;
         console.log(`Current fastest fee rate: ${feeRate} sat/vB`);
       } catch (error) {
@@ -2553,9 +2707,9 @@ export class ChannelService {
       ]));
 
       // Leaf 2: User Key + CSV (unilateral exit path)
-      // NOTE: Must match WalletService.createTaprootMultisig exactly - uses 1, not csvLockBlocks
+      // Use csvLockBlocks (144) for proper CSV lock
       const scriptUser = Buffer.from(bitcoin.script.compile([
-        bitcoin.script.number.encode(1), // Same as WalletService - uses 1, not csvLockBlocks
+        bitcoin.script.number.encode(csvLockBlocks), // Use proper CSV lock blocks (144)
         bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
         bitcoin.opcodes.OP_DROP,
         userPk,
@@ -2652,22 +2806,53 @@ export class ChannelService {
         totalBalance += utxo.value;
       }
 
-      // Calculate estimated fee for all inputs
+      // Validate that committed balances match total balance (with some tolerance for fees)
+      const committedTotal = channel.userBalance + channel.hubBalance;
+      if (Math.abs(committedTotal - totalBalance) > 10000) {
+        console.warn(
+          `Balance mismatch: committedTotal (${committedTotal}) != totalBalance (${totalBalance}). ` +
+          `Using committed balances for split.`
+        );
+      }
+
+      // Calculate estimated fee for all inputs and outputs
       const numInputs = utxos.length;
-      const numOutputs = 1; // Only user output (no change needed if we spend all)
+      const numOutputs = 2; // User output + Hub output (proper split)
       const estimatedVSize = (numInputs * INPUT_SIZE) + (numOutputs * OUTPUT_SIZE) + OVERHEAD;
       const estimatedFee = estimatedVSize * feeRate;
 
       console.log(`Estimated Fee: ${estimatedFee} sats (Rate: ${feeRate} sat/vB, vSize: ~${estimatedVSize})`);
-      console.log(`Total balance: ${totalBalance} sats, After fee: ${totalBalance - estimatedFee} sats`);
+      console.log(`Total balance: ${totalBalance} sats`);
+      console.log(`Committed balances - User: ${channel.userBalance} sats, Hub: ${channel.hubBalance} sats`);
+
+      // Calculate proper split based on committed balances
+      // Fee is deducted from user's share since user initiates the exit
+      const userOutput = BigInt(Math.max(0, channel.userBalance - estimatedFee));
+      const hubOutput = BigInt(channel.hubBalance);
+
+      // Validate outputs
+      if (userOutput < BigInt(0)) {
+        throw new Error(
+          `Insufficient user balance for fee. User balance: ${channel.userBalance} sats, Fee: ${estimatedFee} sats`
+        );
+      }
+
+      // Verify total outputs don't exceed total balance
+      const totalOutputs = Number(userOutput) + Number(hubOutput);
+      if (totalOutputs > totalBalance) {
+        throw new Error(
+          `Outputs exceed balance. Total outputs: ${totalOutputs} sats, Total balance: ${totalBalance} sats. ` +
+          `This may indicate stale commitment state.`
+        );
+      }
 
       // Sequence: CSV uses relative time/block height
       // For block-based relative locktime, we need to set the flag 0x80000000
       // Format: 0x80000000 | blockCount (for block-based CSV)
-      // For 1 block: 0x80000001
-      // Note: Script uses 1, so sequence should be 0x80000001
+      // For 144 blocks: 0x80000090
+      // This matches the script which uses csvLockBlocks (144)
       // bitcoinjs-lib will handle the encoding, but we need to set it correctly
-      const sequence = 0x80000000 | 1; // Block-based relative locktime: 1 block
+      const sequence = 0x80000000 | csvLockBlocks; // Block-based relative locktime: 144 blocks
 
       // Add all UTXOs as inputs (to clear the taproot address completely)
       console.log(`Adding ${utxos.length} UTXO(s) as inputs...`);
@@ -2690,10 +2875,7 @@ export class ChannelService {
         });
       }
 
-      // Calculate user output (all balance minus fee)
-      const userOutput = BigInt(Math.max(0, totalBalance - estimatedFee));
-
-      // Add output to user's address
+      // Add output to user's address (userBalance - fee)
       console.log(`Adding output to user address: ${channel.userAddress} (${userOutput} sats)`);
       const userAddressScript = bitcoin.address.toOutputScript(channel.userAddress, network);
       psbt.addOutput({
@@ -2701,12 +2883,26 @@ export class ChannelService {
         value: userOutput,
       });
 
+      // Add output to hub's address (hubBalance - full amount, no fee deduction)
+      if (hubOutput > BigInt(0)) {
+        console.log(`Adding output to hub address: ${channel.hubAddress} (${hubOutput} sats)`);
+        const hubAddressScript = bitcoin.address.toOutputScript(channel.hubAddress, network);
+        psbt.addOutput({
+          script: hubAddressScript,
+          value: hubOutput,
+        });
+      } else {
+        console.log(`Hub balance is ${channel.hubBalance} sats (non-positive), skipping hub output`);
+      }
+
       // Validate PSBT before signing
       console.log('Validating PSBT...');
       if (psbt.inputCount === 0) {
         throw new Error('PSBT has no inputs');
       }
-      console.log(`PSBT validated: ${psbt.inputCount} input(s), 1 output`);
+      const outputCount = hubOutput > BigInt(0) ? 2 : 1;
+      console.log(`PSBT validated: ${psbt.inputCount} input(s), ${outputCount} output(s)`);
+      console.log(`Funds split - User: ${userOutput} sats, Hub: ${hubOutput} sats`);
 
       // Sign all inputs with user's key (unilateral, only user signs)
       console.log('Signing all inputs with user key...');
@@ -2734,8 +2930,12 @@ export class ChannelService {
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
       const virtualSize = tx.virtualSize();
+      const actualUserOutput = Number(tx.outs[0]?.value || 0);
+      const actualHubOutput = tx.outs.length > 1 ? Number(tx.outs[1]?.value || 0) : 0;
+      const actualFee = totalBalance - actualUserOutput - actualHubOutput;
       console.log(`Actual Transaction vSize: ${virtualSize} vBytes`);
-      console.log(`Actual Fee: ${totalBalance - Number(userOutput)} sats`);
+      console.log(`Actual Fee: ${actualFee} sats`);
+      console.log(`Actual Outputs - User: ${actualUserOutput} sats, Hub: ${actualHubOutput} sats`);
       
       // Validate transaction structure
       console.log('Validating transaction structure...');
@@ -2754,7 +2954,7 @@ export class ChannelService {
       let exitTxid: string;
       try {
         const broadcastRes = await axios.post(
-          'https://mempool.space/testnet/api/tx',
+          this.getMempoolBroadcastUrl(),
           txHex,
           {
             headers: {
@@ -2809,7 +3009,7 @@ export class ChannelService {
         exitTxid,
         csvLockTime: new Date(),
         unlockTime,
-        message: `Unilateral exit initiated. Transaction ${exitTxid} broadcast to testnet. Funds will be available after ${csvLockMinutes} minutes (CSV lock).`,
+        message: `Unilateral exit initiated. Transaction ${exitTxid} broadcast to ${this.getNetworkString()}. Funds will be available after ${csvLockMinutes} minutes (CSV lock).`,
       };
     } catch (error: any) {
       console.error(`Error in unilateralExit: ${error.message}`);
@@ -2820,12 +3020,14 @@ export class ChannelService {
   }
 
   /**
-   * Competing Remedy Transaction
-   * Hub can use this to prevent fraud if user tries to broadcast stale transaction
+   * Competing Remedy Transaction (R1 Transaction)
+   * Hub creates and broadcasts latest commitment transaction to compete with stale U1 transaction
+   * This is the R1 tx that invalidates the user's stale U1 tx
    */
   static async competingRemedy(
     channelId: string,
-    staleCommitmentNumber: number
+    staleCommitmentNumber: number,
+    hubPrivateKey?: string
   ): Promise<{
     remedyTxid: string;
     success: boolean;
@@ -2842,17 +3044,55 @@ export class ChannelService {
       throw new Error('Commitment is not stale. Cannot create remedy transaction.');
     }
 
-    // In production, this would create and broadcast a competing transaction
-    // that proves the stale transaction is invalid
-    const remedyTxid = crypto
-      .createHash('sha256')
-      .update(`${channelId}-${Date.now()}-remedy-${staleCommitmentNumber}`)
-      .digest('hex');
+    // Get hub private key
+    const hubPrivKey = hubPrivateKey || config.hubPrivateKey;
+    if (!hubPrivKey) {
+      throw new Error('Hub private key is required for competing remedy transaction');
+    }
+
+    // Get user private key (we need both to create 2-of-2 transaction)
+    // In production, hub would have stored user's public key and create transaction
+    // For now, we'll use the latest commitment transaction if available
+    console.log(`[Competing Remedy] Creating R1 transaction to compete with stale commitment #${staleCommitmentNumber}`);
+    console.log(`[Competing Remedy] Latest commitment: #${channel.commitmentNumber}`);
+
+    let remedyTxid: string;
+
+    // If we have a stored latest commitment transaction, broadcast it
+    if (channel.lastCommitmentTxHex) {
+      try {
+        console.log(`[Competing Remedy] Broadcasting stored latest commitment transaction (R1 tx)...`);
+        const broadcastRes = await axios.post(
+          this.getMempoolBroadcastUrl(),
+          channel.lastCommitmentTxHex,
+          {
+            headers: {
+              'Content-Type': 'text/plain',
+            },
+          }
+        );
+        remedyTxid = broadcastRes.data;
+        console.log(`[Competing Remedy] ✓ R1 transaction broadcast: ${remedyTxid}`);
+        console.log(`[Competing Remedy]   View on ${this.getNetworkString()}: ${this.getMempoolTxUrl(remedyTxid)}`);
+      } catch (error: any) {
+        console.error(`[Competing Remedy] Failed to broadcast stored commitment: ${error.message}`);
+        throw new Error(`Failed to broadcast competing remedy transaction: ${error.message}`);
+      }
+    } else {
+      // No stored transaction - this shouldn't happen if channel has commitments
+      throw new Error('No stored commitment transaction found. Cannot create competing remedy.');
+    }
+
+    // Update channel status
+    await channel.update({ 
+      status: 'closed',
+      closingTxid: remedyTxid,
+    });
 
     return {
       remedyTxid,
       success: true,
-      message: `Competing remedy transaction created. Stale commitment #${staleCommitmentNumber} has been invalidated.`,
+      message: `Competing remedy transaction (R1 tx) broadcast successfully to ${this.getNetworkString()}. Stale commitment #${staleCommitmentNumber} has been invalidated. TXID: ${remedyTxid}`,
     };
   }
 }

@@ -6,6 +6,7 @@ import * as bip39 from 'bip39';
 import BIP32Factory from 'bip32';
 import { Buffer } from 'buffer';
 import axios from 'axios';
+import { config } from '../config/env';
 
 // Initialize ECC library for bitcoinjs-lib
 initEccLib(ecc);
@@ -36,7 +37,9 @@ export class WalletService {
    */
   static generateWallet(): Wallet {
     try {
-      const network = bitcoin.networks.testnet;
+      const network = config.bitcoinNetwork === 'mainnet' 
+        ? bitcoin.networks.bitcoin 
+        : bitcoin.networks.testnet;
 
       // Generate mnemonic
       const mnemonic = bip39.generateMnemonic();
@@ -47,8 +50,10 @@ export class WalletService {
       // Create root from seed
       const root = bip32.fromSeed(seed, network);
 
-      // Derive path m/44'/1'/0'/0/0 (Testnet P2PKH derivation path - coin type 1 for testnet)
-      const path = "m/44'/1'/0'/0/0";
+      // Derive path based on network: m/44'/0'/0'/0/0 for mainnet, m/44'/1'/0'/0/0 for testnet
+      // Coin type: 0 for mainnet, 1 for testnet
+      const coinType = config.bitcoinNetwork === 'mainnet' ? 0 : 1;
+      const path = `m/44'/${coinType}'/0'/0/0`;
       const child = root.derivePath(path);
 
       // Generate address from derived public key
@@ -65,13 +70,14 @@ export class WalletService {
         addressToPublicKeyMap.set(walletAddress, walletPublicKey);
       }
 
+      const networkString = config.bitcoinNetwork === 'mainnet' ? 'mainnet' : 'testnet3';
       return {
         address: walletAddress,
         privateKey: child.toWIF(),
         publicKey: walletPublicKey,
         mnemonic,
         derivationPath: path,
-        network: 'testnet3', // bitcoin.networks.testnet refers to testnet3 (compatible with testnet4 for addresses)
+        network: networkString,
       };
     } catch (error) {
       throw new Error(`Failed to generate wallet: ${error}`);
@@ -129,7 +135,9 @@ export class WalletService {
         );
       }
 
-      const network = bitcoin.networks.testnet;
+      const network = config.bitcoinNetwork === 'mainnet' 
+        ? bitcoin.networks.bitcoin 
+        : bitcoin.networks.testnet;
 
       // Remove "0x" prefix if present
       const cleanPubkey1 = pubkey1.startsWith('0x') ? pubkey1.slice(2) : pubkey1;
@@ -158,7 +166,7 @@ export class WalletService {
       // Leaf 2: User Key + 144 CSV
       // <144> CSV DROP <pk1> CHECKSIG
       const scriptUser = Buffer.from(bitcoin.script.compile([
-        bitcoin.script.number.encode(1),
+        bitcoin.script.number.encode(144), // Standard Lightning Network delay: 144 blocks
         bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
         bitcoin.opcodes.OP_DROP,
         pk1,
@@ -220,13 +228,17 @@ export class WalletService {
       // If broadcastPayload is provided, use it directly
       if (broadcastPayload) {
         const broadcastRes = await axios.post(
-          'https://mempool.space/testnet/api/tx',
+          config.bitcoinNetwork === 'mainnet' 
+            ? 'https://mempool.space/api/tx'
+            : 'https://mempool.space/testnet/api/tx',
           broadcastPayload
         );
         return broadcastRes.data; // txid
       }
 
-      const network = bitcoin.networks.testnet;
+      const network = config.bitcoinNetwork === 'mainnet' 
+        ? bitcoin.networks.bitcoin 
+        : bitcoin.networks.testnet;
 
       console.log('Starting createAndBroadcastTransaction...');
       // 1. Derive keys and reconstruct multisig script
@@ -380,7 +392,9 @@ export class WalletService {
       // 2. Fetch UTXOs
       console.log(`Fetching UTXOs for address: ${finalMultisigAddress}`);
       const { data: utxos } = await axios.get(
-        `https://mempool.space/testnet/api/address/${finalMultisigAddress}/utxo`
+        config.bitcoinNetwork === 'mainnet'
+          ? `https://mempool.space/api/address/${finalMultisigAddress}/utxo`
+          : `https://mempool.space/testnet/api/address/${finalMultisigAddress}/utxo`
       );
       console.log(`Found ${utxos?.length || 0} UTXOs`);
 
@@ -392,7 +406,10 @@ export class WalletService {
       console.log('Fetching fee rates...');
       let feeRate = 7.5; // Default fallback
       try {
-        const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
+        const feesUrl = config.bitcoinNetwork === 'mainnet'
+          ? 'https://mempool.space/api/v1/fees/recommended'
+          : 'https://mempool.space/testnet/api/v1/fees/recommended';
+        const { data: fees } = await axios.get(feesUrl);
         feeRate = fees.fastestFee;
         console.log(`Current fastest fee rate: ${feeRate} sat/vB`);
       } catch (error) {
@@ -417,7 +434,9 @@ export class WalletService {
       // Select UTXOs
       for (const utxo of utxos) {
         const txHex = await axios.get(
-          `https://mempool.space/testnet/api/tx/${utxo.txid}/hex`
+          config.bitcoinNetwork === 'mainnet'
+            ? `https://mempool.space/api/tx/${utxo.txid}/hex`
+            : `https://mempool.space/testnet/api/tx/${utxo.txid}/hex`
         );
 
         inputsToAdd.push({
@@ -493,7 +512,9 @@ export class WalletService {
 
       try {
         const broadcastRes = await axios.post(
-          'https://mempool.space/testnet/api/tx',
+          config.bitcoinNetwork === 'mainnet' 
+            ? 'https://mempool.space/api/tx'
+            : 'https://mempool.space/testnet/api/tx',
           txHex,
           {
             headers: {
