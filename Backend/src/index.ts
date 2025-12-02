@@ -18,10 +18,11 @@ app.use('/api', routes);
 app.use(errorHandler);
 
 // Start server
-app.listen(config.port, () => {
-  console.log(`🚀 Server running on http://localhost:${config.port}`);
-  console.log(`📦 Environment: ${config.nodeEnv}`);
-  console.log(`🌐 Frontend URL: ${config.frontendUrl}`);
-  console.log(`🔗 API Version: ${config.apiVersion}`);
+const port = config.port;
+app.listen(port, () => {
+  if (config.nodeEnv === 'development') {
+    console.log(`Server running on http://localhost:${port}`);
+    console.log(`Environment: ${config.nodeEnv}`);
+  }
 });
 

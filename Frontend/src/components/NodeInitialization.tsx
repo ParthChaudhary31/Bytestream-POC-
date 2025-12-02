@@ -49,7 +49,6 @@ export function NodeInitialization({ userLabel, existingKeys, onKeysGenerated }:
         onKeysGenerated(walletData);
       }
     } catch (error) {
-      console.error('Failed to generate wallet:', error);
       alert('Failed to generate wallet. Please try again.');
     } finally {
       setLoading(false);

@@ -6,6 +6,7 @@ import * as bip39 from 'bip39';
 import BIP32Factory from 'bip32';
 import { Buffer } from 'buffer';
 import axios from 'axios';
+import { getDb } from '../db/database';
 
 // Initialize ECC library for bitcoinjs-lib
 initEccLib(ecc);
@@ -82,18 +83,14 @@ export class WalletService {
    * Create a Taproot multisig address
    * Accepts either addresses or public keys
    */
-  static createTaprootMultisig(address1: string, address2: string): TaprootMultisig {
+  /**
+   * Create a Taproot multisig address
+   * Accepts public keys (hex strings)
+   */
+  static createTaprootMultisig(pubkey1: string, pubkey2: string): TaprootMultisig {
     try {
-      if (!address1 || !address2) {
-        throw new Error('Both address1 and address2 are required');
-      }
-
-      // Look up public keys from addresses
-      const pubkey1 = addressToPublicKeyMap.get(address1);
-      const pubkey2 = addressToPublicKeyMap.get(address2);
-
       if (!pubkey1 || !pubkey2) {
-        throw new Error(`Public key not found for one or both addresses. Address1: ${address1}, Address2: ${address2}`);
+        throw new Error('Both pubkey1 and pubkey2 are required');
       }
 
       const network = bitcoin.networks.testnet;
@@ -178,6 +175,8 @@ export class WalletService {
     hubAddress: string,
     userPrivateKey: string,
     hubPrivateKey: string,
+    amount: number,
+    recipientAddress: string,
     nonce?: number,
     taprootAddress?: string,
     broadcastPayload?: string,
@@ -195,9 +194,7 @@ export class WalletService {
 
       const network = bitcoin.networks.testnet;
 
-      console.log('Starting createAndBroadcastTransaction...');
       // 1. Derive keys and reconstruct multisig script
-      console.log('Deriving keys...');
 
       let userKey: any;
       let hubKey: any;
@@ -215,7 +212,6 @@ export class WalletService {
           userKey = ECPair.fromWIF(userPrivateKey, network);
           pk1 = toXOnly(Buffer.from(userKey.publicKey));
         } catch (e) {
-          console.log('Invalid or missing userPrivateKey');
         }
       }
 
@@ -224,7 +220,6 @@ export class WalletService {
           hubKey = ECPair.fromWIF(hubPrivateKey, network);
           pk2 = toXOnly(Buffer.from(hubKey.publicKey));
         } catch (e) {
-          console.log('Invalid or missing hubPrivateKey');
         }
       }
 
@@ -290,17 +285,14 @@ export class WalletService {
       let signers: any[] = [];
 
       if (userKey && hubKey) {
-        console.log('Both keys provided. Using Immediate 2-of-2 path.');
         selectedScript = scriptImmediate;
         sequence = 0; // Immediate
         signers = [userKey, hubKey];
       } else if (userKey) {
-        console.log('Only User key provided. Using User + 144 CSV path.');
         selectedScript = scriptUser;
         sequence = 144; // Delayed
         signers = [userKey];
       } else if (hubKey) {
-        console.log('Only Hub key provided. Using Hub + 144 CSV path.');
         selectedScript = scriptHub;
         sequence = 144; // Delayed
         signers = [hubKey];
@@ -345,32 +337,26 @@ export class WalletService {
       if (!scriptPubKey) throw new Error('Failed to derive scriptPubKey');
 
       // 2. Fetch UTXOs
-      console.log(`Fetching UTXOs for address: ${finalMultisigAddress}`);
       const { data: utxos } = await axios.get(
         `https://mempool.space/testnet/api/address/${finalMultisigAddress}/utxo`
       );
-      console.log(`Found ${utxos?.length || 0} UTXOs`);
 
       if (!utxos || utxos.length === 0) {
         throw new Error('No UTXOs found for the multisig address');
       }
 
       // 3. Fetch Fee Rate
-      console.log('Fetching fee rates...');
       let feeRate = 10; // Default fallback
       try {
         const { data: fees } = await axios.get('https://mempool.space/testnet/api/v1/fees/recommended');
         feeRate = fees.fastestFee;
-        console.log(`Current fastest fee rate: ${feeRate} sat/vB`);
       } catch (error) {
-        console.warn('Failed to fetch fee rates, using default:', feeRate);
       }
 
       // 4. Create PSBT
-      console.log('Creating PSBT...');
       const psbt = new bitcoin.Psbt({ network });
 
-      const sendAmount = 10000; // 0.0001 BTC
+      const sendAmount = amount;
 
       // Fee Estimation Constants
       const INPUT_SIZE = 150; // Conservative estimate for Taproot script path spend (vBytes)
@@ -419,7 +405,6 @@ export class WalletService {
         throw new Error(`Insufficient funds. Have: ${totalInput}, Need: ${sendAmount + estimatedFee} (Amount: ${sendAmount} + Fee: ${estimatedFee})`);
       }
 
-      console.log(`Estimated Fee: ${estimatedFee} sats (Rate: ${feeRate} sat/vB, vSize: ~${estimatedFee / feeRate})`);
 
       // Add inputs to PSBT
       for (const input of inputsToAdd) {
@@ -428,7 +413,7 @@ export class WalletService {
 
       // 5. Add outputs
       psbt.addOutput({
-        address: 'mieqF8AK1SLqYqH75t3Sp8oATzFN5jpt7L',
+        address: recipientAddress,
         value: BigInt(sendAmount),
       });
 
@@ -442,21 +427,16 @@ export class WalletService {
       }
 
       // 6. Sign Input
-      console.log('Signing inputs...');
       for (const signer of signers) {
         psbt.signAllInputs(signer);
       }
 
-      console.log('Finalizing inputs...');
       psbt.finalizeAllInputs();
 
       // 7. Broadcast
-      console.log('Extracting transaction...');
       const tx = psbt.extractTransaction();
       const txHex = tx.toHex();
       const virtualSize = tx.virtualSize();
-      console.log(`Actual Transaction vSize: ${virtualSize} vBytes`);
-      console.log(`Actual Fee Rate: ${(totalInput - Number(tx.outs.reduce((acc, out) => acc + Number(out.value), 0))) / virtualSize} sat/vB`);
 
       try {
         const broadcastRes = await axios.post(
@@ -468,25 +448,270 @@ export class WalletService {
             },
           }
         );
-        console.log('Broadcast success:', broadcastRes.data);
 
         return broadcastRes.data; // txid
       } catch (broadcastError: any) {
-        console.error('Broadcast error details:', {
-          status: broadcastError.response?.status,
-          statusText: broadcastError.response?.statusText,
-          data: broadcastError.response?.data,
-          txHex: txHex.substring(0, 100) + '...',
-        });
         throw new Error(`Broadcast failed: ${broadcastError.response?.data || broadcastError.message}`);
       }
 
     } catch (error: any) {
-      console.error('Detailed error:', error);
-      if (error.cause) console.error('Error cause:', error.cause);
-      if (error.errors) console.error('Aggregate errors:', error.errors); // For AggregateError
 
       throw new Error(`Failed to create and broadcast transaction: ${error.message || error}`);
+    }
+  }
+  /**
+   * Create a commitment PSBT signed by the sender
+   */
+  static async createCommitmentService(
+    senderPrivateKey: string,
+    utxos: Array<{ txid: string; vout: number; value: number }>,
+    scriptHex: string,
+    receiverAddress: string,
+    amount: number,
+    multisigAddress: string
+  ): Promise<string> {
+    try {
+      const network = bitcoin.networks.testnet;
+      const senderKey = ECPair.fromWIF(senderPrivateKey, network);
+      const script = Buffer.from(scriptHex, 'hex');
+
+      // Reconstruct the Taproot tree to get the control block
+      const decompiled = bitcoin.script.decompile(script);
+      if (!decompiled || decompiled.length !== 6) {
+        throw new Error('Invalid script format. Expected 2-of-2 multisig script.');
+      }
+
+      const pk1 = decompiled[0] as Buffer;
+      const pk2 = decompiled[2] as Buffer;
+
+      // Reconstruct leaves
+      const scriptImmediate = script;
+
+      const scriptUser = Buffer.from(bitcoin.script.compile([
+        bitcoin.script.number.encode(144),
+        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+        bitcoin.opcodes.OP_DROP,
+        pk1,
+        bitcoin.opcodes.OP_CHECKSIG,
+      ]));
+
+      const scriptHub = Buffer.from(bitcoin.script.compile([
+        bitcoin.script.number.encode(144),
+        bitcoin.opcodes.OP_CHECKSEQUENCEVERIFY,
+        bitcoin.opcodes.OP_DROP,
+        pk2,
+        bitcoin.opcodes.OP_CHECKSIG,
+      ]));
+
+      const scriptTree = [
+        { output: scriptImmediate },
+        [
+          { output: scriptUser },
+          { output: scriptHub },
+        ],
+      ];
+
+      const tapLeaf = { output: scriptImmediate };
+
+      const { output: scriptPubKey, witness } = (bitcoin.payments.p2tr as any)({
+        internalPubkey: Buffer.from('50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0', 'hex'),
+        scriptTree,
+        redeem: tapLeaf,
+        network
+      });
+
+      const controlBlock = witness![witness!.length - 1];
+
+      const psbt = new bitcoin.Psbt({ network });
+
+      // Coin Selection Logic
+      let totalInput = 0;
+      const inputsToAdd: any[] = [];
+      const fee = 1000; // Fixed fee for now
+
+      for (const utxo of utxos) {
+        inputsToAdd.push({
+          hash: utxo.txid,
+          index: utxo.vout,
+          witnessUtxo: {
+            script: scriptPubKey!,
+            value: BigInt(utxo.value),
+          },
+          tapLeafScript: [
+            {
+              leafVersion: 192,
+              script: scriptImmediate,
+              controlBlock: controlBlock,
+            },
+          ],
+        });
+
+        totalInput += utxo.value;
+
+        if (totalInput >= amount + fee) {
+          break;
+        }
+      }
+
+      if (totalInput < amount + fee) {
+        throw new Error(`Insufficient funds. Have: ${totalInput}, Need: ${amount + fee}`);
+      }
+
+      // Add inputs to PSBT
+      for (const input of inputsToAdd) {
+        psbt.addInput(input);
+      }
+
+      psbt.addOutput({
+        address: receiverAddress,
+        value: BigInt(amount),
+      });
+
+      // Change output
+      const change = totalInput - amount - fee;
+
+      if (change > 546) {
+        psbt.addOutput({
+          address: multisigAddress,
+          value: BigInt(change),
+        });
+      }
+
+      // Sign all inputs with sender key
+      for (let i = 0; i < inputsToAdd.length; i++) {
+        psbt.signInput(i, senderKey);
+      }
+
+      // Return hex (not finalized, as we need hub sig)
+      return psbt.toHex();
+
+    } catch (error) {
+      throw new Error(`Failed to create commitment: ${error}`);
+    }
+  }
+
+  /**
+   * Hub signs and pushes the latest commitment for a sender
+   */
+  static async signAndPushService(
+    hubPrivateKey: string,
+    senderAddress: string
+  ): Promise<string> {
+    try {
+      const db = await getDb();
+      // Get the latest commitment (highest commitment_number) for the sender
+      const row = await db.get(
+        'SELECT commitment FROM transactions WHERE sender = ? ORDER BY commitment_number DESC LIMIT 1',
+        [senderAddress]
+      );
+
+      if (!row || !row.commitment) {
+        throw new Error('No commitment found for this sender');
+      }
+
+      const psbtHex = row.commitment;
+      const network = bitcoin.networks.testnet;
+      const hubKey = ECPair.fromWIF(hubPrivateKey, network);
+
+      const psbt = bitcoin.Psbt.fromHex(psbtHex, { network });
+
+      // Sign with Hub key
+      psbt.signInput(0, hubKey);
+
+      // Finalize all inputs (combine signatures)
+      psbt.finalizeAllInputs();
+
+      // Extract transaction
+      const tx = psbt.extractTransaction();
+      const txHex = tx.toHex();
+
+
+      try {
+        const broadcastRes = await axios.post(
+          'https://mempool.space/testnet/api/tx',
+          txHex,
+          {
+            headers: {
+              'Content-Type': 'text/plain',
+            },
+          }
+        );
+        return broadcastRes.data; // txid
+      } catch (broadcastError: any) {
+
+        throw new Error(`Broadcast failed: ${broadcastError.response?.data || broadcastError.message}`);
+      }
+
+    } catch (error) {
+      throw new Error(`Failed to sign and push transaction: ${error}`);
+    }
+  }
+  /**
+   * Settle all pending commitments for a receiver from multiple senders
+   */
+  static async settleUserCommitmentsService(
+    receiverAddress: string,
+    hubPrivateKey: string
+  ): Promise<{ successful: string[], failed: string[] }> {
+    try {
+      const db = await getDb();
+      const network = bitcoin.networks.testnet;
+      const hubKey = ECPair.fromWIF(hubPrivateKey, network);
+
+      // Optimized SQL to get the latest commitment for each unique sender
+      // We want the row with the MAX(commitment_number) for each sender where receiver matches and settled is 0
+      const rows = await db.all(`
+        SELECT t1.*
+        FROM transactions t1
+        JOIN (
+            SELECT sender, MAX(commitment_number) as max_commitment
+            FROM transactions
+            WHERE receiver = ? AND settled = 0
+            GROUP BY sender
+        ) t2 ON t1.sender = t2.sender AND t1.commitment_number = t2.max_commitment
+        WHERE t1.receiver = ? AND t1.settled = 0
+      `, [receiverAddress, receiverAddress]);
+
+
+      const successful: string[] = [];
+      const failed: string[] = [];
+
+      for (const row of rows) {
+        try {
+          const psbtHex = row.commitment;
+          const psbt = bitcoin.Psbt.fromHex(psbtHex, { network });
+
+          // Sign with Hub key
+          psbt.signInput(0, hubKey);
+
+          // Finalize
+          psbt.finalizeAllInputs();
+
+          // Extract and Broadcast
+          const tx = psbt.extractTransaction();
+          const txHex = tx.toHex();
+          const txid = tx.getId();
+
+
+          await axios.post(
+            'https://mempool.space/testnet/api/tx',
+            txHex,
+            { headers: { 'Content-Type': 'text/plain' } }
+          );
+
+          // Mark as settled
+          await db.run('UPDATE transactions SET settled = 1 WHERE id = ?', [row.id]);
+          successful.push(txid);
+
+        } catch (error: any) {
+          failed.push(`Sender ${row.sender}: ${error.message}`);
+        }
+      }
+
+      return { successful, failed };
+
+    } catch (error) {
+      throw new Error(`Failed to settle commitments: ${error}`);
     }
   }
 }

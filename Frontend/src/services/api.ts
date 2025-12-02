@@ -1,110 +1,68 @@
-/// <reference types="../vite-env" />
+import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
-const API_VERSION = import.meta.env.VITE_API_VERSION || 'v1';
+const API_URL = 'http://localhost:3001/api/v1/wallet';
 
-class ApiService {
-  private baseUrl: string;
+export const api = {
+  generateWallet: async () => {
+    const response = await axios.get(`${API_URL}/generate-wallet`);
+    return response.data;
+  },
 
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/${API_VERSION}`;
-  }
+  createTaprootMultisig: async (pubkey1: string, pubkey2: string) => {
+    const response = await axios.post(`${API_URL}/create-taproot-multisig`, {
+      pubkey1,
+      pubkey2,
+    });
+    return response.data;
+  },
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    };
+  getUtxos: async (address: string) => {
+    // Using mempool.space testnet API directly as per backend logic
+    const response = await axios.get(`https://mempool.space/testnet/api/address/${address}/utxo`);
+    return response.data;
+  },
 
-    try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({
-          error: { message: 'An error occurred' },
-        }));
-        throw new Error(error.error?.message || 'Request failed');
-      }
+  createCommitment: async (params: {
+    senderPrivateKey: string;
+    utxos: Array<{ txid: string; vout: number; value: number }>;
+    scriptHex: string;
+    receiverAddress: string;
+    amount: number;
+    multisigAddress: string;
+  }) => {
+    const response = await axios.post(`${API_URL}/create-commitment`, params);
+    return response.data;
+  },
 
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error('Network error occurred');
-    }
-  }
+  addTransaction: async (payload: {
+    sender: string;
+    receiver: string;
+    amount: number;
+    commitment_number: number;
+    commitment: string;
+  }) => {
+    const response = await axios.post(`${API_URL}/add-transaction`, payload);
+    return response.data;
+  },
 
-  // Wallet endpoints
-  async generateWallet() {
-    return this.request<{ 
-      address: string; 
-      privateKey: string; 
-      publicKey: string; 
-      mnemonic: string;
-      derivationPath: string;
-      network: string;
-    }>(
-      '/wallet/generate-wallet'
-    );
-  }
+  settleCommitments: async (receiverAddress: string, hubPrivateKey: string) => {
+    const response = await axios.post(`${API_URL}/settle-commitments`, {
+      receiverAddress,
+      hubPrivateKey,
+    });
+    return response.data;
+  },
 
-  // Create Taproot multisig
-  async createTaprootMultisig(address1: string, address2: string) {
-    return this.request<{ address: string; scriptHex: string }>(
-      '/wallet/create-taproot-multisig',
-      {
-        method: 'POST',
-        body: JSON.stringify({ address1, address2 }),
-      }
-    );
-  }
-
-  // Create and broadcast transaction
-  async createTransaction(
-    userAddress: string,
-    hubAddress: string,
-    userPrivateKey: string,
-    hubPrivateKey: string,
-    nonce?: number,
-    taprootAddress?: string,
-    broadcastPayload?: string,
-    multisigAddress?: string
-  ) {
-    return this.request<{ success: boolean; txid: string }>(
-      '/wallet/create-transaction',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          userAddress,
-          hubAddress,
-          userPrivateKey,
-          hubPrivateKey,
-          nonce,
-          taprootAddress,
-          broadcastPayload,
-          multisigAddress,
-        }),
-      }
-    );
-  }
-
-  // Health check
-  async healthCheck() {
-    return this.request<{ status: string; timestamp: string; environment: string }>(
-      '/health'
-    );
-  }
-}
-
-export const apiService = new ApiService();
-
+  broadcastTransaction: async (data: {
+    userAddress: string;
+    hubAddress: string;
+    userPrivateKey: string;
+    hubPrivateKey: string;
+    amount: number;
+    recipientAddress: string;
+    multisigAddress: string;
+  }) => {
+    const response = await axios.post(`${API_URL}/broadcast-transaction`, data);
+    return response.data;
+  },
+};

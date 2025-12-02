@@ -25,6 +25,8 @@
     "dotenv": "^16.4.5",
     "ecpair": "^3.0.0",
     "express": "^5.1.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
     "tiny-secp256k1": "^2.2.4"
   },
   "devDependencies": {

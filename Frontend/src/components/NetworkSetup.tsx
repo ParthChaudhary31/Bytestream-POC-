@@ -152,7 +152,6 @@ export function NetworkSetup() {
       const result = await apiService.createTaprootMultisig(user1Addr, hubAddr);
       dispatch(setUser1HubTaproot(result));
     } catch (error) {
-      console.error('Failed to create taproot multisig:', error);
       alert('Failed to create taproot multisig. Please try again.');
     } finally {
       setLoadingUser1Hub(false);
@@ -171,7 +170,6 @@ export function NetworkSetup() {
       const result = await apiService.createTaprootMultisig(user2Addr, hubAddr);
       dispatch(setUser2HubTaproot(result));
     } catch (error) {
-      console.error('Failed to create taproot multisig:', error);
       alert('Failed to create taproot multisig. Please try again.');
     } finally {
       setLoadingUser2Hub(false);
@@ -241,7 +239,6 @@ export function NetworkSetup() {
       dispatch(setUser1TransactionTxid(result.txid));
       alert(`Transaction created and broadcasted successfully! TXID: ${result.txid}`);
     } catch (error) {
-      console.error('Failed to create transaction:', error);
       alert(`Failed to create transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoadingUser1Transaction(false);
@@ -278,7 +275,6 @@ export function NetworkSetup() {
       dispatch(setUser2TransactionTxid(result.txid));
       alert(`Transaction created and broadcasted successfully! TXID: ${result.txid}`);
     } catch (error) {
-      console.error('Failed to create transaction:', error);
       alert(`Failed to create transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoadingUser2Transaction(false);
